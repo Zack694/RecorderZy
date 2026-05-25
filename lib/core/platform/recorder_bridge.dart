@@ -143,7 +143,7 @@ class RecorderBridge {
       'heightPx': display.heightPx,
       'densityDpi': display.densityDpi,
       'frameRate': s.frameRate,
-      'bitrateBps': s.bitrateMbps * 1_000_000,
+      'bitrateBps': s.bitrateMbps * 1000000,
       'useApv': s.useApv,
       'audioMode': s.audioMode.nativeName,
       'noiseSuppression': s.noiseSuppression,
