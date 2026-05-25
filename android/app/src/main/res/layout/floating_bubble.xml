@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Layout for the draggable floating recording bubble.
+    Hosted by FloatingOverlayService inside a TYPE_APPLICATION_OVERLAY window
+    that has FLAG_SECURE applied so it is invisible to MediaProjection capture.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/bubbleRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:padding="6dp">
+
+    <FrameLayout
+        android:id="@+id/bubbleBody"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:background="@drawable/ic_floating_circle"
+        android:elevation="6dp">
+
+        <ImageView
+            android:id="@+id/bubbleIcon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_record_white"
+            android:contentDescription="@null"
+            tools:ignore="UseAppTint" />
+
+        <TextView
+            android:id="@+id/bubbleTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="4dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:visibility="gone"
+            tools:text="00:00" />
+    </FrameLayout>
+</FrameLayout>
