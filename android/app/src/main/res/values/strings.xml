@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RecorderZy</string>
+    <string name="notif_channel_recording">Recording</string>
+    <string name="notif_channel_recording_desc">Persistent controls while RecorderZy is capturing your screen.</string>
+    <string name="notif_channel_overlay">Floating Controls</string>
+    <string name="notif_channel_overlay_desc">Keeps the floating control overlay alive in the background.</string>
+    <string name="notif_recording_title">RecorderZy is recording</string>
+    <string name="notif_recording_paused">RecorderZy is paused</string>
+    <string name="notif_overlay_title">RecorderZy floating controls</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_screenshot">Screenshot</string>
+</resources>
