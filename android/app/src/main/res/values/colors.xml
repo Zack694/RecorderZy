@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_primary">#FF5C6BC0</color>
+    <color name="brand_accent">#FFFF7043</color>
+    <color name="brand_record">#FFE53935</color>
+    <color name="overlay_surface">#CC1B1F2A</color>
+    <color name="overlay_surface_translucent">#881B1F2A</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="ic_launcher_background">#FF1B1F2A</color>
+</resources>
