@@ -77,7 +77,7 @@ object Screenshotter {
                 callback(uri)
             } finally {
                 runCatching { image.close() }
-                runCatching { display.release() }
+                runCatching { display?.release() }
                 runCatching { reader.close() }
                 runCatching { thread.quitSafely() }
             }

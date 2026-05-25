@@ -101,7 +101,7 @@ class FloatingOverlayService : Service() {
     private fun ensureOverlayShown() {
         if (rootView != null) return
         val sizeDp = prefs.getInt(KEY_SIZE_DP, 56)
-        val alpha = prefs.getFloat(KEY_ALPHA, 0.92f)
+        val styleAlpha = prefs.getFloat(KEY_ALPHA, 0.92f)
 
         val sizePx = dp(sizeDp)
         val drawerWidth = dp(220)
@@ -206,7 +206,7 @@ class FloatingOverlayService : Service() {
 
         // The container's measured size depends on whether the drawer is
         // visible; force a layout pass so we know the bounds.
-        applyStyle(sizeDp = sizeDp, alpha = alpha)
+        applyStyle(sizeDp = sizeDp, alpha = styleAlpha)
 
         attachDragAndTap(handle, drawer, params)
         observeRecorderState(handle, recordDot, timer, pauseBtn)
