@@ -22,11 +22,12 @@ import com.recorderzy.app.R
  * recorder engine and a persistent notification with Pause/Resume/Stop
  * quick actions.
  *
- * Android 14 introduced strict foreground-service-type enforcement; we
- * declare both `mediaProjection` and `microphone` types in the manifest so
- * we can capture system audio + the mic without falling foul of the new
- * privacy gate. The notification is non-dismissible while a session is
- * active to satisfy the same enforcement.
+ * CRITICAL ANDROID 14+ INVARIANT:
+ *   `startForegroundService()` requires the service to call `startForeground()`
+ *   within ~5 seconds, otherwise the system crashes the *calling process* with
+ *   ForegroundServiceDidNotStartInTimeException. This service therefore calls
+ *   `startForegroundSafely()` as the very first operation in `onStartCommand`,
+ *   *before* any branching, intent parsing, or possible exception.
  */
 class ScreenRecorderService : Service() {
 
@@ -37,9 +38,31 @@ class ScreenRecorderService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
+
+        // ===========================================================
+        // STEP 1: Enter foreground IMMEDIATELY, no matter what.
+        // This satisfies the 5-second startForegroundService deadline
+        // before we do any work that could throw or block.
+        // ===========================================================
+        try {
+            val phase = RecorderStateBus.phase.value
+            val paused = phase == RecorderStateBus.Phase.PAUSED
+            val withScreenshot = action == ACTION_SCREENSHOT && phase == RecorderStateBus.Phase.IDLE
+            startForegroundSafely(buildNotification(paused = paused, withScreenshot = withScreenshot))
+        } catch (e: Throwable) {
+            // If we can't even enter foreground, log and bail out. The system
+            // will already be unhappy but we won't make it worse.
+            Log.e(TAG, "startForeground failed in onStartCommand: ${e.message}", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // ===========================================================
+        // STEP 2: Now safely dispatch to the action handler.
+        // ===========================================================
         try {
             when (action) {
-                ACTION_START -> handleStart(intent!!)
+                ACTION_START -> handleStart()
                 ACTION_PAUSE -> {
                     engine?.pause()
                     postNotification(paused = true)
@@ -49,47 +72,40 @@ class ScreenRecorderService : Service() {
                     postNotification(paused = false)
                 }
                 ACTION_STOP -> handleStop()
-                ACTION_SCREENSHOT -> handleScreenshot(intent!!)
+                ACTION_SCREENSHOT -> handleScreenshot()
                 else -> {
                     Log.w(TAG, "Unknown action: $action")
-                    stopSelf()
+                    if (engine == null) {
+                        stopForegroundCompat()
+                        stopSelf()
+                    }
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Error handling action '$action': ${e.message}", e)
-            // Don't crash the whole app - gracefully stop.
-            runCatching { stopForegroundCompat() }
+            // We're already foreground so this is safe.
+            runCatching { engine?.stop() }
+            engine = null
+            runCatching { projection?.stop() }
+            projection = null
+            stopForegroundCompat()
             stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    private fun handleStart(intent: Intent) {
-        val resultCode = intent.getIntExtra(RecorderConfig.EXTRA_PROJECTION_RESULT_CODE, -1)
-        @Suppress("DEPRECATION")
-        val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(RecorderConfig.EXTRA_PROJECTION_DATA, Intent::class.java)
-        } else {
-            intent.getParcelableExtra(RecorderConfig.EXTRA_PROJECTION_DATA)
-        }
-        if (resultCode == -1 || data == null) {
-            Log.w(TAG, "Refusing to start without projection token (resultCode=$resultCode, data=$data)")
+    private fun handleStart() {
+        // Token comes from ProjectionTokenHolder, NOT from intent extras.
+        // See ProjectionTokenHolder for why.
+        val (resultCode, data) = ProjectionTokenHolder.take() ?: run {
+            Log.w(TAG, "handleStart: no projection token available")
+            stopForegroundCompat()
             stopSelf()
             return
         }
-        val cfg = RecorderConfig.fromIntent(intent)
 
-        // CRITICAL: Enter foreground BEFORE calling getMediaProjection().
-        // Android 14+ (API 34) will crash the app with
-        // ForegroundServiceDidNotStartInTimeException if we call
-        // getMediaProjection before the service is in foreground state.
-        try {
-            startForegroundSafely(buildNotification(paused = false, withScreenshot = false))
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to enter foreground: ${e.message}", e)
-            stopSelf()
-            return
-        }
+        // Re-read config from prefs (set right before the start).
+        val cfg = RecorderLauncher.pendingConfig ?: RecorderConfig.defaults()
 
         val mgr = getSystemService(MediaProjectionManager::class.java)
         if (mgr == null) {
@@ -99,14 +115,11 @@ class ScreenRecorderService : Service() {
             return
         }
 
-        val projection: MediaProjection?
-        try {
-            projection = mgr.getMediaProjection(resultCode, data)
-        } catch (e: Exception) {
+        val projection: MediaProjection? = try {
+            mgr.getMediaProjection(resultCode, data)
+        } catch (e: Throwable) {
             Log.e(TAG, "getMediaProjection threw: ${e.message}", e)
-            stopForegroundCompat()
-            stopSelf()
-            return
+            null
         }
 
         if (projection == null) {
@@ -128,7 +141,7 @@ class ScreenRecorderService : Service() {
                     else -> Unit
                 }
             }.also { it.start() }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Failed to start recording engine: ${e.message}", e)
             runCatching { projection.stop() }
             this.projection = null
@@ -138,45 +151,44 @@ class ScreenRecorderService : Service() {
     }
 
     private fun handleStop() {
-        engine?.stop() ?: run {
-            // Engine is null - just clean up.
+        val activeEngine = engine
+        if (activeEngine == null) {
             stopForegroundCompat()
             stopSelf()
+        } else {
+            activeEngine.stop()
         }
     }
 
-    private fun handleScreenshot(intent: Intent) {
-        val cfg = RecorderConfig.fromIntent(intent)
+    private fun handleScreenshot() {
+        val cfg = RecorderLauncher.pendingConfig ?: RecorderConfig.defaults()
+        val scalePercent = RecorderLauncher.pendingScreenshotScale.coerceIn(25, 100)
+
         val proj = projection ?: run {
-            val resultCode = intent.getIntExtra(RecorderConfig.EXTRA_PROJECTION_RESULT_CODE, -1)
-            @Suppress("DEPRECATION")
-            val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(RecorderConfig.EXTRA_PROJECTION_DATA, Intent::class.java)
-            } else {
-                intent.getParcelableExtra(RecorderConfig.EXTRA_PROJECTION_DATA)
-            }
-            if (resultCode == -1 || data == null) {
-                Log.w(TAG, "Cannot screenshot without a projection token")
-                return
-            }
-            try {
-                startForegroundSafely(buildNotification(paused = false, withScreenshot = true))
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to enter foreground for screenshot: ${e.message}", e)
+            // No active session - need to seed projection from the holder.
+            val (resultCode, data) = ProjectionTokenHolder.take() ?: run {
+                Log.w(TAG, "Cannot screenshot: no projection token")
+                stopForegroundCompat()
+                stopSelf()
                 return
             }
             getSystemService(MediaProjectionManager::class.java)
                 ?.getMediaProjection(resultCode, data)
-                ?.also { projection = it }
-                ?: return
+                ?.also { projection = it } ?: run {
+                Log.e(TAG, "getMediaProjection returned null for screenshot")
+                stopForegroundCompat()
+                stopSelf()
+                return
+            }
         }
+
         Screenshotter.capture(
             applicationContext,
             proj,
             cfg.widthPx,
             cfg.heightPx,
             cfg.densityDpi,
-            scalePercent = intent.getIntExtra(EXTRA_SCREENSHOT_SCALE, 100).coerceIn(25, 100),
+            scalePercent = scalePercent,
         ) { _ ->
             // If we don't have an active recording session, tear the projection down.
             if (engine == null) {
@@ -212,10 +224,7 @@ class ScreenRecorderService : Service() {
     }
 
     private fun startForegroundSafely(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Android 14+: must specify foreground service types
-            startForeground(NOTIF_ID, notification, foregroundTypes())
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, notification, foregroundTypes())
         } else {
             startForeground(NOTIF_ID, notification)
@@ -287,7 +296,7 @@ class ScreenRecorderService : Service() {
             } else {
                 @Suppress("DEPRECATION") stopForeground(true)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "stopForeground failed: ${e.message}")
         }
     }
@@ -297,6 +306,7 @@ class ScreenRecorderService : Service() {
         runCatching { projection?.unregisterCallback(projectionCallback) }
         runCatching { projection?.stop() }
         projection = null
+        ProjectionTokenHolder.clear()
         super.onDestroy()
     }
 
@@ -310,57 +320,65 @@ class ScreenRecorderService : Service() {
         const val ACTION_STOP = "com.recorderzy.app.STOP"
         const val ACTION_SCREENSHOT = "com.recorderzy.app.SCREENSHOT"
 
-        const val EXTRA_SCREENSHOT_SCALE = "screenshotScalePercent"
-
-        fun launchStart(context: Context, resultCode: Int, data: Intent, cfg: RecorderConfig) {
+        /**
+         * Start a fresh recording session. The caller must already have
+         * deposited a projection token via [ProjectionTokenHolder.set] and
+         * the desired config via [RecorderLauncher.pendingConfig].
+         */
+        fun launchStart(context: Context) {
             val intent = Intent(context, ScreenRecorderService::class.java)
                 .setAction(ACTION_START)
-                .putExtra(RecorderConfig.EXTRA_PROJECTION_RESULT_CODE, resultCode)
-                .putExtra(RecorderConfig.EXTRA_PROJECTION_DATA, data)
-            cfg.applyExtras(intent)
-            // START must use startForegroundService because the service
-            // isn't in the foreground yet.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "launchStart failed: ${e.message}", e)
             }
         }
 
         /**
-         * Send a command (pause/resume/stop) to an ALREADY-RUNNING service.
-         * We use plain startService here — the service is already foreground
-         * so we don't need startForegroundService (which would require
-         * calling startForeground again within 5s on some OEMs).
+         * Send a command to an already-running service. Uses plain
+         * startService so we don't trip Android 14's 5-second
+         * startForeground deadline a second time.
          */
         fun launchAction(context: Context, action: String) {
             val intent = Intent(context, ScreenRecorderService::class.java).setAction(action)
             try {
                 context.startService(intent)
-            } catch (e: Exception) {
-                // Fallback: if the service isn't running yet, try foreground
-                Log.w(TAG, "startService failed for $action, trying startForegroundService: ${e.message}")
+            } catch (e: Throwable) {
+                // Some OEMs throw IllegalStateException if the service was
+                // killed; fall back to startForegroundService so the system
+                // can revive it.
+                Log.w(TAG, "startService failed for $action: ${e.message}")
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         context.startForegroundService(intent)
                     }
-                } catch (e2: Exception) {
+                } catch (e2: Throwable) {
                     Log.e(TAG, "startForegroundService also failed for $action: ${e2.message}")
                 }
             }
         }
 
-        fun launchScreenshot(context: Context, resultCode: Int, data: Intent, cfg: RecorderConfig, scalePercent: Int = 100) {
+        /**
+         * Take a one-shot screenshot. Caller must deposit the projection
+         * token via [ProjectionTokenHolder.set] and the config via
+         * [RecorderLauncher.pendingConfig] / .pendingScreenshotScale.
+         */
+        fun launchScreenshot(context: Context) {
             val intent = Intent(context, ScreenRecorderService::class.java)
                 .setAction(ACTION_SCREENSHOT)
-                .putExtra(RecorderConfig.EXTRA_PROJECTION_RESULT_CODE, resultCode)
-                .putExtra(RecorderConfig.EXTRA_PROJECTION_DATA, data)
-                .putExtra(EXTRA_SCREENSHOT_SCALE, scalePercent)
-            cfg.applyExtras(intent)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "launchScreenshot failed: ${e.message}", e)
             }
         }
     }

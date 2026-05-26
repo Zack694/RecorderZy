@@ -68,7 +68,6 @@ class ScreenRecorderEngine(
     fun start() {
         try {
             onState(State.STARTING)
-            RecorderStateBus.publishPhase(RecorderStateBus.Phase.RECORDING)
 
             // Cache file we'll later move into the public MediaStore album.
             val out = File(context.cacheDir, "recorderzy_${System.currentTimeMillis()}.mp4")
@@ -84,9 +83,15 @@ class ScreenRecorderEngine(
             engineScope.launch { observeAdpf() }
             engineScope.launch { tickElapsed() }
 
+            // Only publish RECORDING phase after the pipeline is fully up.
+            // If we'd published it earlier the overlay would show "recording"
+            // while the encoder was still starting and a config failure would
+            // leave the bus in an inconsistent RECORDING state.
+            RecorderStateBus.publishPhase(RecorderStateBus.Phase.RECORDING)
             onState(State.RECORDING)
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to start engine: ${t.message}", t)
+            RecorderStateBus.reset()
             onState(State.ERROR)
             stop()
         }
