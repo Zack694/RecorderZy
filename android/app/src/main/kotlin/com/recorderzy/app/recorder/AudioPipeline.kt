@@ -102,37 +102,57 @@ class AudioPipeline(
         val bufSize = minBuf * 2
 
         if (mode == RecorderConfig.AudioMode.MIC || mode == RecorderConfig.AudioMode.BOTH) {
-            micRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRate,
-                channelMask,
-                pcmFormat,
-                bufSize
-            )
-            if (noiseSuppression && NoiseSuppressor.isAvailable()) {
-                noiseSuppressor = runCatching {
-                    NoiseSuppressor.create(micRecord!!.audioSessionId).also { it.enabled = true }
-                }.getOrNull()
+            try {
+                val record = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    sampleRate,
+                    channelMask,
+                    pcmFormat,
+                    bufSize
+                )
+                if (record.state == AudioRecord.STATE_INITIALIZED) {
+                    micRecord = record
+                    if (noiseSuppression && NoiseSuppressor.isAvailable()) {
+                        noiseSuppressor = runCatching {
+                            NoiseSuppressor.create(record.audioSessionId).also { it.enabled = true }
+                        }.getOrNull()
+                    }
+                } else {
+                    Log.w(TAG, "Mic AudioRecord failed to initialize (permission missing?)")
+                    runCatching { record.release() }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to create mic AudioRecord: ${e.message}")
             }
         }
         if (mode == RecorderConfig.AudioMode.INTERNAL || mode == RecorderConfig.AudioMode.BOTH) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val capCfg = AudioPlaybackCaptureConfiguration.Builder(projection)
-                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                    .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
-                    .build()
-                internalRecord = AudioRecord.Builder()
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(pcmFormat)
-                            .setSampleRate(sampleRate)
-                            .setChannelMask(channelMask)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(bufSize)
-                    .setAudioPlaybackCaptureConfig(capCfg)
-                    .build()
+                try {
+                    val capCfg = AudioPlaybackCaptureConfiguration.Builder(projection)
+                        .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                        .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                        .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                        .build()
+                    val record = AudioRecord.Builder()
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setEncoding(pcmFormat)
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(channelMask)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(bufSize)
+                        .setAudioPlaybackCaptureConfig(capCfg)
+                        .build()
+                    if (record.state == AudioRecord.STATE_INITIALIZED) {
+                        internalRecord = record
+                    } else {
+                        Log.w(TAG, "Internal AudioRecord failed to initialize")
+                        runCatching { record.release() }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to create internal AudioRecord: ${e.message}")
+                }
             }
         }
     }

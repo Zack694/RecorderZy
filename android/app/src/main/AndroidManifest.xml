@@ -86,7 +86,8 @@
             android:exported="false"
             android:theme="@style/Theme.Translucent"
             android:excludeFromRecents="true"
-            android:launchMode="singleInstance" />
+            android:launchMode="standard"
+            android:noHistory="true" />
 
         <!-- Foreground service: screen capture + microphone + special-use for ADPF -->
         <service

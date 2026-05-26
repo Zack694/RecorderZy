@@ -155,32 +155,44 @@ class ScreenRecorderEngine(
         val width = cfg.widthPx
         val height = cfg.heightPx
         val fps = if (arr.hasArrSupport()) arr.suggestedFrameRate(cfg.frameRate) else cfg.frameRate
-        val mime = if (cfg.useApv && supportsApv()) APV_MIME else MediaFormat.MIMETYPE_VIDEO_HEVC
 
-        val format = MediaFormat.createVideoFormat(mime, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, cfg.bitrateBps)
-            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            setInteger(MediaFormat.KEY_BITRATE_MODE,
-                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
-            // Hint: we want hardware HEVC / APV. MediaCodec.createEncoderByType
-            // will fail over to a software encoder when no HW path exists.
-            if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC) {
-                setInteger(MediaFormat.KEY_PROFILE,
-                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
-                setInteger(MediaFormat.KEY_LEVEL,
-                    MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
+        // Determine codec priority: APV > HEVC > H.264 (fallback)
+        val mimePreferences = buildList {
+            if (cfg.useApv && supportsApv()) add(APV_MIME)
+            add(MediaFormat.MIMETYPE_VIDEO_HEVC)
+            add(MediaFormat.MIMETYPE_VIDEO_AVC) // always-available fallback
+        }
+
+        var lastError: Throwable? = null
+        for (mime in mimePreferences) {
+            try {
+                val format = MediaFormat.createVideoFormat(mime, width, height).apply {
+                    setInteger(MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                    setInteger(MediaFormat.KEY_BIT_RATE, cfg.bitrateBps)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                    setInteger(MediaFormat.KEY_BITRATE_MODE,
+                        MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
+                    // Don't force profile/level - let the encoder pick what
+                    // it actually supports. Forcing HEVCMainTierLevel51 was
+                    // crashing on Dimensity/Snapdragon mid-range chips.
+                }
+                val codec = MediaCodec.createEncoderByType(mime)
+                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                inputSurface = codec.createInputSurface()
+                codec.start()
+                videoCodec = codec
+                Log.i(TAG, "Video encoder configured: $mime @ ${width}x${height} ${fps}fps")
+                inputSurface?.let { arr.lockSurfaceFrameRate(it, fps) }
+                return // success
+            } catch (t: Throwable) {
+                Log.w(TAG, "Encoder $mime failed, trying next: ${t.message}")
+                lastError = t
             }
         }
-        val codec = MediaCodec.createEncoderByType(mime)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        inputSurface = codec.createInputSurface()
-        codec.start()
-        videoCodec = codec
-
-        inputSurface?.let { arr.lockSurfaceFrameRate(it, fps) }
+        // If all codecs failed, throw so the caller (start()) catches it
+        throw IllegalStateException("All video encoders failed", lastError)
     }
 
     private fun supportsApv(): Boolean {
