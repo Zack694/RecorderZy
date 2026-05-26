@@ -33,34 +33,59 @@ class RecorderBridge {
     required RecorderSettings settings,
     required DisplayInfo display,
   }) async {
-    final ok = await _recorderChannel.invokeMethod<bool>(
-      'startRecording',
-      {'config': _buildConfig(settings, display)},
-    );
-    return ok ?? false;
+    try {
+      final ok = await _recorderChannel.invokeMethod<bool>(
+        'startRecording',
+        {'config': _buildConfig(settings, display)},
+      );
+      return ok ?? false;
+    } catch (e) {
+      print('RecorderBridge.startRecording error: $e');
+      return false;
+    }
   }
 
-  Future<void> pauseRecording() =>
-      _recorderChannel.invokeMethod<void>('pauseRecording');
+  Future<void> pauseRecording() async {
+    try {
+      await _recorderChannel.invokeMethod<void>('pauseRecording');
+    } catch (e) {
+      print('RecorderBridge.pauseRecording error: $e');
+    }
+  }
 
-  Future<void> resumeRecording() =>
-      _recorderChannel.invokeMethod<void>('resumeRecording');
+  Future<void> resumeRecording() async {
+    try {
+      await _recorderChannel.invokeMethod<void>('resumeRecording');
+    } catch (e) {
+      print('RecorderBridge.resumeRecording error: $e');
+    }
+  }
 
-  Future<void> stopRecording() =>
-      _recorderChannel.invokeMethod<void>('stopRecording');
+  Future<void> stopRecording() async {
+    try {
+      await _recorderChannel.invokeMethod<void>('stopRecording');
+    } catch (e) {
+      print('RecorderBridge.stopRecording error: $e');
+    }
+  }
 
   Future<bool> takeScreenshot({
     required RecorderSettings settings,
     required DisplayInfo display,
   }) async {
-    final ok = await _recorderChannel.invokeMethod<bool>(
-      'takeScreenshot',
-      {
-        'config': _buildConfig(settings, display),
-        'scalePercent': settings.screenshotScale.percent,
-      },
-    );
-    return ok ?? false;
+    try {
+      final ok = await _recorderChannel.invokeMethod<bool>(
+        'takeScreenshot',
+        {
+          'config': _buildConfig(settings, display),
+          'scalePercent': settings.screenshotScale.percent,
+        },
+      );
+      return ok ?? false;
+    } catch (e) {
+      print('RecorderBridge.takeScreenshot error: $e');
+      return false;
+    }
   }
 
   Future<bool> isRecording() async {

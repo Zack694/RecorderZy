@@ -95,15 +95,23 @@ class RecorderChannel(
             ?: return result.error("ARG", "Missing config", null)
         val cfg = RecorderConfig.fromMap(cfgMap)
 
-        ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
-            override fun onProjectionGranted(resultCode: Int, data: Intent) {
-                ScreenRecorderService.launchStart(activity, resultCode, data, cfg)
-                result.success(true)
-            }
-            override fun onProjectionDenied() {
-                result.success(false)
-            }
-        })
+        try {
+            ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
+                override fun onProjectionGranted(resultCode: Int, data: Intent) {
+                    try {
+                        ScreenRecorderService.launchStart(activity, resultCode, data, cfg)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SERVICE", "Failed to start recorder: ${e.message}", null)
+                    }
+                }
+                override fun onProjectionDenied() {
+                    result.success(false)
+                }
+            })
+        } catch (e: Exception) {
+            result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
+        }
     }
 
     private fun handleScreenshot(call: MethodCall, result: MethodChannel.Result) {
@@ -112,15 +120,23 @@ class RecorderChannel(
         val scale = (call.argument<Int>("scalePercent") ?: 100).coerceIn(25, 100)
         val cfg = RecorderConfig.fromMap(cfgMap)
 
-        ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
-            override fun onProjectionGranted(resultCode: Int, data: Intent) {
-                ScreenRecorderService.launchScreenshot(activity, resultCode, data, cfg, scale)
-                result.success(true)
-            }
-            override fun onProjectionDenied() {
-                result.success(false)
-            }
-        })
+        try {
+            ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
+                override fun onProjectionGranted(resultCode: Int, data: Intent) {
+                    try {
+                        ScreenRecorderService.launchScreenshot(activity, resultCode, data, cfg, scale)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SERVICE", "Failed to take screenshot: ${e.message}", null)
+                    }
+                }
+                override fun onProjectionDenied() {
+                    result.success(false)
+                }
+            })
+        } catch (e: Exception) {
+            result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
+        }
     }
 
     // -------------------------------------------------------------------- //
