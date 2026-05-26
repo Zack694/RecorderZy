@@ -1,9 +1,8 @@
 package com.recorderzy.app.channels
 
 import android.app.Activity
-import android.content.Intent
-import com.recorderzy.app.permissions.ProjectionRequestActivity
 import com.recorderzy.app.recorder.RecorderConfig
+import com.recorderzy.app.recorder.RecorderLauncher
 import com.recorderzy.app.recorder.RecorderStateBus
 import com.recorderzy.app.recorder.ScreenRecorderService
 import io.flutter.plugin.common.BinaryMessenger
@@ -62,31 +61,35 @@ class RecorderChannel(
     // -------------------------------------------------------------------- //
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        when (call.method) {
-            "startRecording" -> handleStart(call, result)
-            "pauseRecording" -> {
-                ScreenRecorderService.launchAction(
-                    activity, ScreenRecorderService.ACTION_PAUSE
+        try {
+            when (call.method) {
+                "startRecording" -> handleStart(call, result)
+                "pauseRecording" -> {
+                    ScreenRecorderService.launchAction(
+                        activity, ScreenRecorderService.ACTION_PAUSE
+                    )
+                    result.success(null)
+                }
+                "resumeRecording" -> {
+                    ScreenRecorderService.launchAction(
+                        activity, ScreenRecorderService.ACTION_RESUME
+                    )
+                    result.success(null)
+                }
+                "stopRecording" -> {
+                    ScreenRecorderService.launchAction(
+                        activity, ScreenRecorderService.ACTION_STOP
+                    )
+                    result.success(null)
+                }
+                "takeScreenshot" -> handleScreenshot(call, result)
+                "isRecording" -> result.success(
+                    RecorderStateBus.phase.value != RecorderStateBus.Phase.IDLE
                 )
-                result.success(null)
+                else -> result.notImplemented()
             }
-            "resumeRecording" -> {
-                ScreenRecorderService.launchAction(
-                    activity, ScreenRecorderService.ACTION_RESUME
-                )
-                result.success(null)
-            }
-            "stopRecording" -> {
-                ScreenRecorderService.launchAction(
-                    activity, ScreenRecorderService.ACTION_STOP
-                )
-                result.success(null)
-            }
-            "takeScreenshot" -> handleScreenshot(call, result)
-            "isRecording" -> result.success(
-                RecorderStateBus.phase.value != RecorderStateBus.Phase.IDLE
-            )
-            else -> result.notImplemented()
+        } catch (e: Throwable) {
+            result.error("UNEXPECTED", e.message ?: "Unknown error", null)
         }
     }
 
@@ -96,20 +99,10 @@ class RecorderChannel(
         val cfg = RecorderConfig.fromMap(cfgMap)
 
         try {
-            ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
-                override fun onProjectionGranted(resultCode: Int, data: Intent) {
-                    try {
-                        ScreenRecorderService.launchStart(activity, resultCode, data, cfg)
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("SERVICE", "Failed to start recorder: ${e.message}", null)
-                    }
-                }
-                override fun onProjectionDenied() {
-                    result.success(false)
-                }
-            })
-        } catch (e: Exception) {
+            RecorderLauncher.startRecording(activity, cfg) { ok ->
+                result.success(ok)
+            }
+        } catch (e: Throwable) {
             result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
         }
     }
@@ -121,20 +114,10 @@ class RecorderChannel(
         val cfg = RecorderConfig.fromMap(cfgMap)
 
         try {
-            ProjectionRequestActivity.request(activity, object : ProjectionRequestActivity.ResultListener {
-                override fun onProjectionGranted(resultCode: Int, data: Intent) {
-                    try {
-                        ScreenRecorderService.launchScreenshot(activity, resultCode, data, cfg, scale)
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("SERVICE", "Failed to take screenshot: ${e.message}", null)
-                    }
-                }
-                override fun onProjectionDenied() {
-                    result.success(false)
-                }
-            })
-        } catch (e: Exception) {
+            RecorderLauncher.takeScreenshot(activity, cfg, scale) { ok ->
+                result.success(ok)
+            }
+        } catch (e: Throwable) {
             result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
         }
     }

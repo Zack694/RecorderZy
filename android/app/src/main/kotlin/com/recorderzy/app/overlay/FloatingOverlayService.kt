@@ -32,6 +32,7 @@ import com.recorderzy.app.MainActivity
 import com.recorderzy.app.MainApplication
 import com.recorderzy.app.R
 import com.recorderzy.app.recorder.RecorderStateBus
+import com.recorderzy.app.recorder.RecorderLauncher
 import com.recorderzy.app.recorder.ScreenRecorderService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -383,11 +384,10 @@ class FloatingOverlayService : Service() {
     private fun onPauseToggleClicked() {
         when (RecorderStateBus.phase.value) {
             RecorderStateBus.Phase.IDLE -> {
-                // Bounce to MainActivity so the user can pick a session.
-                val intent = Intent(this, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    .putExtra(EXTRA_REQUEST_RECORD, true)
-                startActivity(intent)
+                // Trigger projection request directly so the user doesn't
+                // have to bounce through MainActivity.
+                val cfg = RecorderLauncher.autoConfig(this)
+                runCatching { RecorderLauncher.startRecording(this, cfg) }
             }
             RecorderStateBus.Phase.RECORDING -> {
                 ScreenRecorderService.launchAction(this, ScreenRecorderService.ACTION_PAUSE)
@@ -399,13 +399,10 @@ class FloatingOverlayService : Service() {
     }
 
     private fun onScreenshotClicked() {
-        // The MainActivity owns the projection-request flow so we hand off
-        // there. If a recording is active, the activity will reuse the
-        // existing token; if not, it asks for fresh consent.
-        val intent = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .putExtra(EXTRA_REQUEST_SCREENSHOT, true)
-        startActivity(intent)
+        // Use auto-config so the screenshot just works at native resolution,
+        // even when the user hasn't customised settings yet.
+        val cfg = RecorderLauncher.autoConfig(this)
+        runCatching { RecorderLauncher.takeScreenshot(this, cfg, scalePercent = 100) }
     }
 
     private fun onSettingsClicked() {

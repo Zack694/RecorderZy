@@ -44,6 +44,20 @@ data class RecorderConfig(
         const val EXTRA_PROJECTION_RESULT_CODE = "projection_result_code"
         const val EXTRA_PROJECTION_DATA = "projection_data"
 
+        fun defaults(): RecorderConfig = RecorderConfig(
+            widthPx = 1080,
+            heightPx = 1920,
+            densityDpi = 420,
+            frameRate = 60,
+            bitrateBps = 12_000_000,
+            useApv = false,
+            audioMode = AudioMode.MIC,
+            noiseSuppression = false,
+            voicePreset = VoicePreset.NORMAL,
+            showTouches = false,
+            outputFileNameHint = "RecorderZy",
+        )
+
         fun fromMap(map: Map<*, *>): RecorderConfig = RecorderConfig(
             widthPx = (map["widthPx"] as? Int) ?: 1080,
             heightPx = (map["heightPx"] as? Int) ?: 1920,
