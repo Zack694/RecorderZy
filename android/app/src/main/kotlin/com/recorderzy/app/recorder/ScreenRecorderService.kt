@@ -136,29 +136,33 @@ class ScreenRecorderService : Service() {
         projection.registerCallback(projectionCallback, null)
 
         try {
-            engine = ScreenRecorderEngine(this, projection, cfg) { state ->
+            val eng = ScreenRecorderEngine(this, projection, cfg) { state ->
                 when (state) {
                     ScreenRecorderEngine.State.RECORDING -> postNotification(paused = false)
                     ScreenRecorderEngine.State.PAUSED -> postNotification(paused = true)
                     ScreenRecorderEngine.State.STOPPED -> publishOutputAndStop()
                     ScreenRecorderEngine.State.ERROR -> {
-                        showErrorNotification("Recording error", "An error occurred during recording")
+                        showErrorNotification(
+                            "Recording error",
+                            engine?.lastError ?: "An error occurred during recording"
+                        )
                         publishOutputAndStop()
                     }
                     else -> Unit
                 }
-            }.also { it.start() }
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to start recording engine: ${e.message}", e)
-            val errorMsg = when {
-                e.message?.contains("codec", ignoreCase = true) == true -> "Video encoder unavailable"
-                e.message?.contains("dimension", ignoreCase = true) == true -> "Invalid video settings"
-                e.message?.contains("cache", ignoreCase = true) == true -> "Storage unavailable"
-                else -> "Could not start recording"
             }
-            showErrorNotification("Recording failed", errorMsg)
+            engine = eng
+            eng.start()
+        } catch (e: Throwable) {
+            // Surface the REAL reason so it can be read off the notification
+            // instead of guessing. engine.lastError holds the last encoder
+            // failure when all MediaRecorder attempts were exhausted.
+            val reason = engine?.lastError ?: "${e.javaClass.simpleName}: ${e.message}"
+            Log.e(TAG, "Failed to start recording engine: $reason", e)
+            showErrorNotification("Recording failed", reason)
             runCatching { projection.stop() }
             this.projection = null
+            engine = null
             stopForegroundCompat()
             stopSelf()
         }
@@ -414,6 +418,7 @@ class ScreenRecorderService : Service() {
                 .setSmallIcon(R.drawable.ic_close)
                 .setContentTitle(title)
                 .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setOngoing(false)
                 .setAutoCancel(true)
                 .setContentIntent(openPi)
