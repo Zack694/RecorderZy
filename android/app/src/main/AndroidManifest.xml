@@ -111,23 +111,6 @@
                 android:value="floating-control-overlay" />
         </service>
 
-        <!-- Touch indicator service: an AccessibilityService that observes
-             system-wide touch events and renders a small ring at each touch
-             coordinate inside a SECURE overlay window. The user must enable
-             this service from Accessibility settings before it's active;
-             until then taps are simply not visualised. -->
-        <service
-            android:name=".overlay.TouchIndicatorService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/touch_indicator_service" />
-        </service>
-
         <!-- File provider for sharing screenshots etc. with other apps -->
         <provider
             android:name="androidx.core.content.FileProvider"

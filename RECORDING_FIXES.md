@@ -314,3 +314,40 @@ without a screen-record consent prompt.
 5. `android/.../res/xml/touch_indicator_service.xml` — canTakeScreenshot.
 6. `lib/core/platform/recorder_bridge.dart` — ScreenshotOutcome.
 7. `lib/ui/home_screen.dart` — outcome handling + enable-accessibility prompt.
+
+
+---
+
+# Round 4: Reverted screenshot to MediaProjection + removed "Show touches"
+
+Per user request, Round 3's accessibility-based screenshot was reverted and
+the touch-indicator feature was removed entirely (it required enabling an
+accessibility service, which nearly soft-locked the device).
+
+## Screenshots: back to the standard MediaProjection approach
+
+- Screenshots once again use MediaProjection (single captured frame via
+  `Screenshotter`/`ScreenRecorderService`), the same approach standard
+  screen-recorder apps use. No accessibility service required.
+- `RecorderChannel.takeScreenshot` -> `RecorderLauncher.takeScreenshot`,
+  returns a plain bool again.
+- Floating overlay screenshot button uses the same MediaProjection path.
+
+## "Show touches" / touch indicator removed completely
+
+Deleted / cleaned up:
+- `TouchIndicatorService.kt` (the AccessibilityService) - deleted.
+- `res/xml/touch_indicator_service.xml` - deleted.
+- AndroidManifest: removed the accessibility `<service>` entry.
+- `proguard-rules.pro`: removed the keep rule for the deleted service.
+- `RecorderConfig`: removed the `showTouches` field (data class, defaults,
+  fromMap, fromIntent, applyExtras) and `RecorderLauncher.autoConfig`.
+- `OverlayChannel`: removed `openAccessibilitySettings`.
+- `SettingsChannel`: removed `isAccessibilityEnabled`.
+- Flutter `RecorderSettings`/`SettingsController`: removed the `showTouches`
+  setting and its persisted key.
+- Flutter UI: removed the "Show touches" settings card, the "Open
+  accessibility settings" button, the accessibility status row on the home
+  screen, and the `ScreenshotOutcome` plumbing.
+
+The app no longer requests or uses any accessibility capability at all.

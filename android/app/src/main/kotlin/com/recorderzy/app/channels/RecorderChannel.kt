@@ -1,8 +1,6 @@
 package com.recorderzy.app.channels
 
 import android.app.Activity
-import android.os.Build
-import com.recorderzy.app.overlay.TouchIndicatorService
 import com.recorderzy.app.recorder.RecorderConfig
 import com.recorderzy.app.recorder.RecorderLauncher
 import com.recorderzy.app.recorder.RecorderStateBus
@@ -110,30 +108,21 @@ class RecorderChannel(
     }
 
     private fun handleScreenshot(call: MethodCall, result: MethodChannel.Result) {
-        // Screenshots use the AccessibilityService takeScreenshot() API - a
-        // REAL screenshot that needs no screen-recording / MediaProjection
-        // consent dialog. The user must have enabled the RecorderZy
-        // accessibility service once; if not, we report 'needs_accessibility'
-        // so the Flutter UI can guide them to the settings screen.
+        // Screenshots use MediaProjection (a single captured frame), the same
+        // approach standard screen-recorder apps use. A fresh one-shot
+        // projection token is requested, then ScreenRecorderService grabs a
+        // frame and saves it to Pictures/RecorderZy.
+        val cfgMap = call.argument<Map<String, Any?>>("config")
+            ?: return result.error("ARG", "Missing config", null)
         val scale = (call.argument<Int>("scalePercent") ?: 100).coerceIn(25, 100)
+        val cfg = RecorderConfig.fromMap(cfgMap)
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            result.success("unsupported")
-            return
-        }
-        val svc = TouchIndicatorService.instance
-        if (svc == null) {
-            result.success("needs_accessibility")
-            return
-        }
         try {
-            svc.captureScreenshot(scale) { uri ->
-                activity.runOnUiThread {
-                    result.success(if (uri != null) "saved" else "failed")
-                }
+            RecorderLauncher.takeScreenshot(activity, cfg, scale) { ok ->
+                result.success(ok)
             }
         } catch (e: Throwable) {
-            result.success("failed")
+            result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
         }
     }
 

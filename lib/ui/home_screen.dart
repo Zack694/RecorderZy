@@ -28,7 +28,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _overlayPermission = false;
   bool _ignoresBattery = false;
-  bool _accessibilityOn = false;
   bool _hasArr = false;
   int? _suggestedFps;
 
@@ -52,7 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _bridge.displayMetrics(),
       _bridge.overlayHasPermission(),
       _bridge.isIgnoringBatteryOptimizations(),
-      _bridge.isAccessibilityEnabled(),
       _bridge.hasArrSupport(),
       _bridge.getSuggestedFrameRate(widget.settings.value.frameRate),
     ]);
@@ -61,9 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _display = results[0] as DisplayInfo;
       _overlayPermission = results[1] as bool;
       _ignoresBattery = results[2] as bool;
-      _accessibilityOn = results[3] as bool;
-      _hasArr = results[4] as bool;
-      _suggestedFps = results[5] as int;
+      _hasArr = results[3] as bool;
+      _suggestedFps = results[4] as int;
     });
   }
 
@@ -111,38 +108,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _takeScreenshot() async {
     final display = _display ?? await _bridge.displayMetrics();
-    final outcome = await _bridge.takeScreenshot(
+    final ok = await _bridge.takeScreenshot(
       settings: widget.settings.value,
       display: display,
     );
     if (!mounted) return;
-    switch (outcome) {
-      case ScreenshotOutcome.saved:
-        _toast('Screenshot saved to Pictures/RecorderZy.');
-      case ScreenshotOutcome.needsAccessibility:
-        _promptEnableScreenshotAccessibility();
-      case ScreenshotOutcome.unsupported:
-        _toast('Screenshots need Android 11 or newer.');
-      case ScreenshotOutcome.failed:
-        _toast('Screenshot failed. Please try again.');
-    }
-    await _refreshSystemFlags();
-  }
-
-  void _promptEnableScreenshotAccessibility() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-          'Screenshots use the RecorderZy accessibility service. '
-          'Enable it once to allow real screenshots (no screen-record prompt).',
-        ),
-        duration: const Duration(seconds: 6),
-        action: SnackBarAction(
-          label: 'Enable',
-          onPressed: () => _bridge.openAccessibilitySettings(),
-        ),
-      ),
-    );
+    _toast(ok
+        ? 'Screenshot saved to Pictures/RecorderZy.'
+        : 'Screen capture permission was declined.');
   }
 
   Future<void> _toggleOverlay() async {
@@ -263,19 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       _hasArr
                           ? 'Supported - suggested FPS: ${_suggestedFps ?? '-'}'
                           : 'Not available - using configured FPS.',
-                    ),
-                    _statusRow(
-                      'Touch indicator service',
-                      _accessibilityOn
-                          ? 'Enabled - taps are visualised during recording.'
-                          : 'Disabled - enable in Accessibility to use Show Touches.',
-                      onAction: _accessibilityOn
-                          ? null
-                          : () async {
-                              await _bridge.openAccessibilitySettings();
-                              await _refreshSystemFlags();
-                            },
-                      actionLabel: _accessibilityOn ? 'Enabled' : 'Open settings',
                     ),
                   ],
                 ),

@@ -69,27 +69,22 @@ class RecorderBridge {
     }
   }
 
-  Future<ScreenshotOutcome> takeScreenshot({
+  Future<bool> takeScreenshot({
     required RecorderSettings settings,
     required DisplayInfo display,
   }) async {
     try {
-      final res = await _recorderChannel.invokeMethod<String>(
+      final ok = await _recorderChannel.invokeMethod<bool>(
         'takeScreenshot',
         {
           'config': _buildConfig(settings, display),
           'scalePercent': settings.screenshotScale.percent,
         },
       );
-      return switch (res) {
-        'saved' => ScreenshotOutcome.saved,
-        'needs_accessibility' => ScreenshotOutcome.needsAccessibility,
-        'unsupported' => ScreenshotOutcome.unsupported,
-        _ => ScreenshotOutcome.failed,
-      };
+      return ok ?? false;
     } catch (e) {
       print('RecorderBridge.takeScreenshot error: $e');
-      return ScreenshotOutcome.failed;
+      return false;
     }
   }
 
@@ -117,9 +112,6 @@ class RecorderBridge {
         'sizeDp': sizeDp,
         'alpha': alpha,
       });
-
-  Future<void> openAccessibilitySettings() =>
-      _overlayChannel.invokeMethod<void>('openAccessibilitySettings');
 
   // -- Settings / system ------------------------------------------------------
 
@@ -158,10 +150,6 @@ class RecorderBridge {
   Future<void> openBatterySettings() =>
       _settingsChannel.invokeMethod<void>('openBatterySettings');
 
-  Future<bool> isAccessibilityEnabled() async =>
-      (await _settingsChannel.invokeMethod<bool>('isAccessibilityEnabled')) ??
-          false;
-
   // ---------------------------------------------------------------------------
 
   Map<String, dynamic> _buildConfig(
@@ -178,7 +166,6 @@ class RecorderBridge {
       'audioMode': s.audioMode.nativeName,
       'noiseSuppression': s.noiseSuppression,
       'voicePreset': s.voicePreset.nativeName,
-      'showTouches': s.showTouches,
       'outputFileNameHint': 'RecorderZy',
     };
   }
@@ -193,11 +180,6 @@ RecorderPhase _phaseFrom(String name) {
 }
 
 enum RecorderPhase { idle, recording, paused }
-
-/// Outcome of a screenshot request. Screenshots use the accessibility service
-/// (a real screenshot), so they can fail specifically because that service
-/// isn't enabled yet.
-enum ScreenshotOutcome { saved, needsAccessibility, unsupported, failed }
 
 @immutable
 class RecorderState {

@@ -16,9 +16,6 @@ import io.flutter.plugin.common.MethodChannel
  *   - `showOverlay` / `hideOverlay` toggles the overlay service lifecycle.
  *   - `setStyle(sizeDp, alpha)` fires a hot-update so the overlay's circle
  *     resizes / changes opacity without restarting.
- *   - `openAccessibilitySettings` deep-links the user to the screen where
- *     they enable the touch-indicator service (only used when the user
- *     toggled "Show touches" on in Flutter settings).
  */
 class OverlayChannel(
     private val activity: Activity,
@@ -58,12 +55,6 @@ class OverlayChannel(
                 val sizeDp = (call.argument<Int>("sizeDp") ?: 56).coerceIn(40, 96)
                 val alpha = (call.argument<Double>("alpha") ?: 0.92).toFloat().coerceIn(0.2f, 1f)
                 FloatingOverlayService.updateStyle(activity, sizeDp, alpha)
-                result.success(null)
-            }
-            "openAccessibilitySettings" -> {
-                runCatching {
-                    activity.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }
                 result.success(null)
             }
             else -> result.notImplemented()

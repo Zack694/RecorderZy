@@ -82,7 +82,6 @@ object RecorderLauncher {
             audioMode = RecorderConfig.AudioMode.MIC,
             noiseSuppression = false,
             voicePreset = RecorderConfig.VoicePreset.NORMAL,
-            showTouches = false,
             outputFileNameHint = "RecorderZy",
         )
     }

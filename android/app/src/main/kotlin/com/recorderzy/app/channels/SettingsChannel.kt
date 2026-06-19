@@ -22,8 +22,6 @@ import io.flutter.plugin.common.MethodChannel
  *   - `hasArrSupport`              : Android 16 ARR availability
  *   - `getSuggestedFrameRate`      : Android 16 ARR FPS hint
  *   - `isIgnoringBatteryOptimizations` / `requestIgnoreBatteryOptimizations`
- *   - `isAccessibilityEnabled`     : checks if the user has flipped on the
- *                                    touch-indicator AccessibilityService.
  */
 class SettingsChannel(
     private val activity: Activity,
@@ -82,14 +80,6 @@ class SettingsChannel(
                 val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                 runCatching { activity.startActivity(intent) }
                 result.success(null)
-            }
-            "isAccessibilityEnabled" -> {
-                val flag = Settings.Secure.getString(
-                    activity.contentResolver,
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                ).orEmpty()
-                val packageName = activity.packageName
-                result.success(flag.contains(packageName))
             }
             else -> result.notImplemented()
         }

@@ -20,7 +20,6 @@ data class RecorderConfig(
     val audioMode: AudioMode,
     val noiseSuppression: Boolean,
     val voicePreset: VoicePreset,
-    val showTouches: Boolean,
     val outputFileNameHint: String,
 ) {
     enum class AudioMode { MUTE, MIC, INTERNAL, BOTH }
@@ -36,7 +35,6 @@ data class RecorderConfig(
         putExtra("audioMode", audioMode.name)
         putExtra("noiseSuppression", noiseSuppression)
         putExtra("voicePreset", voicePreset.name)
-        putExtra("showTouches", showTouches)
         putExtra("outputFileNameHint", outputFileNameHint)
     }
 
@@ -54,7 +52,6 @@ data class RecorderConfig(
             audioMode = AudioMode.MIC,
             noiseSuppression = false,
             voicePreset = VoicePreset.NORMAL,
-            showTouches = false,
             outputFileNameHint = "RecorderZy",
         )
 
@@ -72,7 +69,6 @@ data class RecorderConfig(
             voicePreset = VoicePreset.valueOf(
                 (map["voicePreset"] as? String)?.uppercase() ?: VoicePreset.NORMAL.name
             ),
-            showTouches = (map["showTouches"] as? Boolean) == true,
             outputFileNameHint = (map["outputFileNameHint"] as? String) ?: "RecorderZy",
         )
 
@@ -90,7 +86,6 @@ data class RecorderConfig(
             voicePreset = VoicePreset.valueOf(
                 intent.getStringExtra("voicePreset") ?: VoicePreset.NORMAL.name
             ),
-            showTouches = intent.getBooleanExtra("showTouches", false),
             outputFileNameHint = intent.getStringExtra("outputFileNameHint") ?: "RecorderZy",
         )
     }

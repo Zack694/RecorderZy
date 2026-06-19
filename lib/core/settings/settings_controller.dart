@@ -20,7 +20,6 @@ class SettingsController extends ChangeNotifier {
   static const _keyAudio = 'audioMode';
   static const _keyNs = 'noiseSuppression';
   static const _keyVoice = 'voicePreset';
-  static const _keyTouches = 'showTouches';
   static const _keyShot = 'screenshotScale';
   static const _keyOvSize = 'overlaySizeDp';
   static const _keyOvAlpha = 'overlayAlpha';
@@ -40,7 +39,6 @@ class SettingsController extends ChangeNotifier {
       audioMode: _readEnum(prefs, _keyAudio, AudioMode.values, AudioMode.mic),
       noiseSuppression: prefs.getBool(_keyNs) ?? false,
       voicePreset: _readEnum(prefs, _keyVoice, VoicePreset.values, VoicePreset.normal),
-      showTouches: prefs.getBool(_keyTouches) ?? false,
       screenshotScale: _readEnum(
         prefs,
         _keyShot,
@@ -73,7 +71,6 @@ class SettingsController extends ChangeNotifier {
     await prefs.setString(_keyAudio, _value.audioMode.name);
     await prefs.setBool(_keyNs, _value.noiseSuppression);
     await prefs.setString(_keyVoice, _value.voicePreset.name);
-    await prefs.setBool(_keyTouches, _value.showTouches);
     await prefs.setString(_keyShot, _value.screenshotScale.name);
     await prefs.setInt(_keyOvSize, _value.overlaySizeDp);
     await prefs.setDouble(_keyOvAlpha, _value.overlayAlpha);

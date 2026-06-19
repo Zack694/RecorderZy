@@ -88,7 +88,6 @@ class RecorderSettings {
     this.audioMode = AudioMode.mic,
     this.noiseSuppression = false,
     this.voicePreset = VoicePreset.normal,
-    this.showTouches = false,
     this.screenshotScale = ScreenshotScale.full,
     this.overlaySizeDp = 56,
     this.overlayAlpha = 0.92,
@@ -105,7 +104,6 @@ class RecorderSettings {
   final AudioMode audioMode;
   final bool noiseSuppression;
   final VoicePreset voicePreset;
-  final bool showTouches;
   final ScreenshotScale screenshotScale;
   final int overlaySizeDp;
   final double overlayAlpha;
@@ -122,7 +120,6 @@ class RecorderSettings {
     AudioMode? audioMode,
     bool? noiseSuppression,
     VoicePreset? voicePreset,
-    bool? showTouches,
     ScreenshotScale? screenshotScale,
     int? overlaySizeDp,
     double? overlayAlpha,
@@ -139,7 +136,6 @@ class RecorderSettings {
       audioMode: audioMode ?? this.audioMode,
       noiseSuppression: noiseSuppression ?? this.noiseSuppression,
       voicePreset: voicePreset ?? this.voicePreset,
-      showTouches: showTouches ?? this.showTouches,
       screenshotScale: screenshotScale ?? this.screenshotScale,
       overlaySizeDp: overlaySizeDp ?? this.overlaySizeDp,
       overlayAlpha: overlayAlpha ?? this.overlayAlpha,

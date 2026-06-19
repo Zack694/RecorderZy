@@ -18,6 +18,3 @@
 
 # AndroidX accessibility / lifecycle runtime helpers may shed inner classes.
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
-
-# Keep AccessibilityService entry point - referenced from manifest / xml.
--keep class com.recorderzy.app.overlay.TouchIndicatorService { *; }

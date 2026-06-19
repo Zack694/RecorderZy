@@ -33,7 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _videoSection(s),
                 _audioSection(s),
                 _audioFxSection(s),
-                _utilitySection(s),
                 _screenshotSection(s),
                 _overlayStyleSection(s),
                 _themeSection(s),
@@ -183,36 +182,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 .toList(),
             onChanged: (p) => widget.controller
                 .update((prev) => prev.copyWith(voicePreset: p ?? VoicePreset.normal)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Utility
-  // ---------------------------------------------------------------------------
-  Widget _utilitySection(RecorderSettings s) {
-    return SectionCard(
-      title: 'Utility',
-      icon: Icons.touch_app_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SwitchListTile.adaptive(
-            value: s.showTouches,
-            title: const Text('Show touches'),
-            subtitle: const Text(
-              'Draws a soft ring at every fingertip during recording. Requires '
-              'enabling the RecorderZy accessibility service once.',
-            ),
-            onChanged: (v) => widget.controller
-                .update((p) => p.copyWith(showTouches: v)),
-          ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.accessibility_new),
-            label: const Text('Open accessibility settings'),
-            onPressed: () => _bridge.openAccessibilitySettings(),
           ),
         ],
       ),

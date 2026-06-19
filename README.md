@@ -21,10 +21,9 @@ Flutter UI + native Kotlin for the heavy lifting.
 - **Floating overlay**, draggable anywhere on screen, with a real-time
   HH:MM:SS timer pill, animated 4-button drawer (Pause/Resume,
   Screenshot, Settings, Close), and adjustable size & opacity.
-- **Hidden from the recording.** Both the floating handle and the touch
-  indicator overlay are added with `FLAG_SECURE`, which `MediaProjection`
-  excludes from capture - visible to the user, completely absent from
-  the saved video file.
+- **Hidden from the recording.** The floating handle is added with
+  `FLAG_SECURE`, which `MediaProjection` excludes from capture - visible to
+  the user, completely absent from the saved video file.
 - **Audio FX.** NoiseSuppressor effect on the mic stream + 5 voice-changer
   presets (Normal / Deep / Robot / Helium / Radio comms). Mic only,
   internal-only, or mic+internal mixed.
@@ -58,8 +57,6 @@ flutter UI ──► RecorderBridge ──► MethodChannel ──► RecorderCh
 
 flutter UI ──► OverlayChannel ──► FloatingOverlayService    (FLAG_SECURE window)
                                        └─► RecorderStateBus  (timer + phase)
-
-       AccessibilityService -> TouchIndicatorService          (FLAG_SECURE overlay)
 ```
 
 ## Required runtime permissions
@@ -72,7 +69,6 @@ flutter UI ──► OverlayChannel ──► FloatingOverlayService    (FLAG_SE
 | `FOREGROUND_SERVICE_MEDIA_PROJECTION`          | Screen capture FG service             |
 | `FOREGROUND_SERVICE_MICROPHONE`                | Mic FG service (Android 14+)          |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`         | High-FPS recording stability          |
-| `BIND_ACCESSIBILITY_SERVICE` (system-granted)  | Touch-indicator service (optional)    |
 
 ## Building
 
@@ -94,9 +90,6 @@ each successful run.
   projection token after a single VirtualDisplay lifecycle, so we
   re-launch `ProjectionRequestActivity` (which simply wraps
   `createScreenCaptureIntent`) every time the user taps Start.
-- **Touch indicator** uses `AccessibilityService.onMotionEvent` (API 31+)
-  with `motionEventSources = SOURCE_TOUCHSCREEN`. The user must enable
-  the service once from Settings > Accessibility for the rings to appear.
 - **Voice changer** uses lightweight DSP colourisation (low-shelf tremolo,
   comb feedback, ring-modulator, band-pass + soft-clip). It is *not* a
   true PSOLA pitch-shifter - this avoids the AV-sync drift that real
