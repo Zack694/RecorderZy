@@ -7,29 +7,25 @@ Flutter UI + native Kotlin for the heavy lifting.
 
 ## Highlights
 
-- **Hardware HEVC encoding** by default, with an opt-in toggle for the new
-  Android 16 **APV** codec profile (`video/apv`).
-- **ADPF thermal-aware pipeline.** Polls
-  `PowerManager#getCpuHeadroom` / `getGpuHeadroom` every 750 ms and
-  trims encoder bitrate before frame drops happen.
-- **Adaptive Refresh Rate.** Uses `Display#hasArrSupport` and
-  `Display#getSuggestedFrameRate` to lock the recorder, encoder surface
-  and panel to a synchronised cadence (up to 120 fps).
-- **Full pause/resume.** Detaches the `VirtualDisplay` surface from the
-  encoder rather than tearing it down, so the same MP4 file is preserved -
-  no segmenting, no black frames.
+- **Reliable `MediaRecorder` capture.** Uses the high-level
+  `MediaRecorder` + `MediaProjection` + `VirtualDisplay` pipeline (the same
+  approach mainstream recorders use) for maximum device compatibility, with
+  an automatic H.264 / lower-frame-rate fallback ladder so it starts even on
+  picky OEM encoders.
+- **Microphone audio** via `MediaRecorder` (AAC). Internal/system audio is
+  not captured by this path.
+- **Full pause/resume** through `MediaRecorder.pause()` / `resume()`.
 - **Floating overlay**, draggable anywhere on screen, with a real-time
   HH:MM:SS timer pill, animated 4-button drawer (Pause/Resume,
   Screenshot, Settings, Close), and adjustable size & opacity.
 - **Hidden from the recording.** The floating handle is added with
   `FLAG_SECURE`, which `MediaProjection` excludes from capture - visible to
   the user, completely absent from the saved video file.
-- **Audio FX.** NoiseSuppressor effect on the mic stream + 5 voice-changer
-  presets (Normal / Deep / Robot / Helium / Radio comms). Mic only,
-  internal-only, or mic+internal mixed.
-- **Crash-safe writes.** `SafeMuxer` defers `start()` until both encoders
-  publish their format and serialises sample writes; if the process is
-  killed mid-stream the partial mp4 still has a valid moov atom.
+- **Microphone capture** recorded as AAC alongside the video. (The voice
+  changer / noise-suppression DSP and internal-audio mixing from earlier
+  builds are not applied on the MediaRecorder path.)
+- **Crash-safe writes.** Recording is written to app cache then published to
+  the public gallery via `MediaStore` only after a clean stop.
 - **Strict modern Android compliance.**
   - Foreground service types `mediaProjection|microphone|specialUse`
   - Re-requests `createScreenCaptureIntent()` for every new session
@@ -46,14 +42,12 @@ flutter UI ──► RecorderBridge ──► MethodChannel ──► RecorderCh
                                                        ▼
                           ScreenRecorderService (foreground, mediaProjection|microphone)
                                                        │
-                  ┌────────────────────────────────────┼────────────────────────────────┐
-                  ▼                                    ▼                                ▼
-        ScreenRecorderEngine                 AudioPipeline                    Screenshotter
-        ├─ MediaCodec (HEVC/APV)             ├─ AudioRecord (mic)             ├─ ImageReader
-        ├─ VirtualDisplay                    ├─ AudioPlaybackCapture          ├─ JPEG -> MediaStore
-        ├─ ADPF / ARR                        ├─ NoiseSuppressor effect
-        └─ SafeMuxer (mp4)                   ├─ VoiceChangerDsp
-                                             └─ MediaCodec (AAC) ─► SafeMuxer
+                  ┌────────────────────────────────────┴───────────────────────────┐
+                  ▼                                                                  ▼
+        ScreenRecorderEngine                                              Screenshotter
+        ├─ MediaRecorder (H.264/HEVC + AAC mic)                           ├─ ImageReader
+        ├─ VirtualDisplay (MediaProjection)                               └─ JPEG -> MediaStore
+        └─ writes MP4 to cache -> MediaStore (Movies/RecorderZy)
 
 flutter UI ──► OverlayChannel ──► FloatingOverlayService    (FLAG_SECURE window)
                                        └─► RecorderStateBus  (timer + phase)

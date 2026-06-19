@@ -351,3 +351,39 @@ Deleted / cleaned up:
   screen, and the `ScreenshotOutcome` plumbing.
 
 The app no longer requests or uses any accessibility capability at all.
+
+
+---
+
+# Round 5: Rewrote recording on MediaRecorder (reliability)
+
+The custom MediaCodec + MediaMuxer + AudioPipeline + SafeMuxer pipeline kept
+failing to start on the device. Per the official Android guidance and common
+practice (AZ-style recorders), the recorder now uses the high-level
+`MediaRecorder` API, which manages the encoder, MP4 muxer, mic audio and A/V
+sync internally and is far more compatible across OEMs.
+
+## What changed
+- `ScreenRecorderEngine` rewritten to use
+  `MediaRecorder` + `MediaProjection` + `VirtualDisplay`:
+  - Output is written to app cache as MP4, then published to
+    `Movies/RecorderZy` via `MediaStore` on stop (unchanged service flow).
+  - Dimensions aligned to a multiple of 16 (fixes 1220x2712 etc.).
+  - Fallback ladder: HEVC@fps -> H.264@fps -> H.264@30 -> H.264@30 no-audio,
+    so it starts even on encoders that reject the first choice.
+  - Mic (AAC) only when audio mode is MIC/BOTH and RECORD_AUDIO is granted.
+  - Pause/resume via `MediaRecorder.pause()/resume()`.
+- Deleted the now-unused `AudioPipeline`, `SafeMuxer`, `VoiceChangerDsp` and
+  `AdpfMonitor` classes.
+
+## Known feature trade-offs (reliability first)
+- Internal/system-audio capture is not available on the MediaRecorder path
+  (it can't use AudioPlaybackCapture). INTERNAL mode records video-only.
+- The voice-changer presets, NoiseSuppressor and APV/ADPF/ARR tuning are no
+  longer applied (their settings toggles persist but have no effect now).
+
+## Verify
+1. Start recording -> "Share screen". Expect the timer + a recording
+   notification, and a clip in `Movies/RecorderZy` after stopping.
+2. Logs: `adb logcat | grep -E "ScreenRecorderEngine|ScreenRecorderService"`
+   The "MediaRecorder prepared (...)" line shows which config succeeded.
