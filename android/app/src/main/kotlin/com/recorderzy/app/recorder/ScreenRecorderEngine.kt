@@ -196,7 +196,20 @@ class ScreenRecorderEngine(
         val rec = newRecorder()
         return try {
             rec.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            if (a.mic) rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            if (a.mic) {
+                // When noise suppression is requested, use VOICE_COMMUNICATION
+                // which runs the mic through the platform's AEC + noise
+                // suppression + auto-gain pre-processing. Otherwise capture the
+                // raw mic. (MediaRecorder doesn't expose an audio session id,
+                // so attaching a NoiseSuppressor effect directly isn't possible
+                // - the source choice is the reliable way to get it.)
+                val source = if (cfg.noiseSuppression) {
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                } else {
+                    MediaRecorder.AudioSource.MIC
+                }
+                rec.setAudioSource(source)
+            }
 
             rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             rec.setOutputFile(out.absolutePath)

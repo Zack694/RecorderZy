@@ -148,11 +148,11 @@ class FloatingOverlayService : Service() {
         }
 
         val pauseBtn = drawerButton(R.drawable.ic_pause) { onPauseToggleClicked() }
+        val stopBtn = drawerButton(R.drawable.ic_stop) { onStopClicked() }
         val screenshotBtn = drawerButton(R.drawable.ic_screenshot) { onScreenshotClicked() }
         val settingsBtn = drawerButton(R.drawable.ic_settings) { onSettingsClicked() }
-        val closeBtn = drawerButton(R.drawable.ic_close) { onCloseClicked() }
 
-        val items = listOf(pauseBtn, screenshotBtn, settingsBtn, closeBtn)
+        val items = listOf(pauseBtn, stopBtn, screenshotBtn, settingsBtn)
         val itemSize = dp(56)
         val gap = (drawerWidth - itemSize * items.size) / (items.size + 1)
         items.forEachIndexed { i, view ->
@@ -413,11 +413,12 @@ class FloatingOverlayService : Service() {
         startActivity(intent)
     }
 
-    private fun onCloseClicked() {
-        // Collapse the drawer back into the single circle without dismissing
-        // the overlay - that's the "X" close-the-drawer affordance from the
-        // spec, not a kill switch for the floating service itself.
-        val drawer = (rootView?.getChildAt(1)) ?: return
+    private fun onStopClicked() {
+        // Stop an active (or paused) recording from the floating drawer.
+        if (RecorderStateBus.phase.value != RecorderStateBus.Phase.IDLE) {
+            ScreenRecorderService.launchAction(this, ScreenRecorderService.ACTION_STOP)
+        }
+        val drawer = rootView?.getChildAt(1) ?: return
         if (drawerExpanded) collapseDrawer(drawer)
     }
 

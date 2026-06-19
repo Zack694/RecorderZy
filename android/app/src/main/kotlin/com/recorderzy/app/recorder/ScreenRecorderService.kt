@@ -380,9 +380,11 @@ class ScreenRecorderService : Service() {
             builder.addAction(action(R.drawable.ic_pause, R.string.action_pause, ACTION_PAUSE))
         }
         builder.addAction(action(R.drawable.ic_stop, R.string.action_stop, ACTION_STOP))
-        if (withScreenshot) {
-            builder.addAction(action(R.drawable.ic_screenshot, R.string.action_screenshot, ACTION_SCREENSHOT))
-        }
+        // Always offer screenshot from the notification. During an active
+        // recording this reuses the existing projection (no consent dialog)
+        // and lets the user grab a still WITHOUT the floating overlay's
+        // secure black-box appearing in anything.
+        builder.addAction(action(R.drawable.ic_screenshot, R.string.action_screenshot, ACTION_SCREENSHOT))
         return builder.build()
     }
 
