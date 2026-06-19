@@ -111,19 +111,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _takeScreenshot() async {
     final display = _display ?? await _bridge.displayMetrics();
-    final ok = await _bridge.takeScreenshot(
+    final outcome = await _bridge.takeScreenshot(
       settings: widget.settings.value,
       display: display,
     );
     if (!mounted) return;
-    // `ok` only reflects whether screen-capture permission was granted - the
-    // actual file write happens asynchronously in the native service, which
-    // posts its own success/failure notification. So we avoid claiming the
-    // screenshot was "saved" here (that message used to show even when no
-    // file was ever written).
-    _toast(ok
-        ? 'Capturing screenshot... check your notifications.'
-        : 'Screen capture permission was declined.');
+    switch (outcome) {
+      case ScreenshotOutcome.saved:
+        _toast('Screenshot saved to Pictures/RecorderZy.');
+      case ScreenshotOutcome.needsAccessibility:
+        _promptEnableScreenshotAccessibility();
+      case ScreenshotOutcome.unsupported:
+        _toast('Screenshots need Android 11 or newer.');
+      case ScreenshotOutcome.failed:
+        _toast('Screenshot failed. Please try again.');
+    }
+    await _refreshSystemFlags();
+  }
+
+  void _promptEnableScreenshotAccessibility() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Screenshots use the RecorderZy accessibility service. '
+          'Enable it once to allow real screenshots (no screen-record prompt).',
+        ),
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+          label: 'Enable',
+          onPressed: () => _bridge.openAccessibilitySettings(),
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleOverlay() async {

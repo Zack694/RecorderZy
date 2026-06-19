@@ -6,6 +6,7 @@
     android:canRetrieveWindowContent="true"
     android:canRequestTouchExplorationMode="false"
     android:canPerformGestures="false"
+    android:canTakeScreenshot="true"
     android:description="@string/notif_overlay_title"
     android:notificationTimeout="50"
     android:settingsActivity="com.recorderzy.app.MainActivity" />

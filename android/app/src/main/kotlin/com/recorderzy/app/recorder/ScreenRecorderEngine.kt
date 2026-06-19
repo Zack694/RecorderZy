@@ -52,6 +52,14 @@ class ScreenRecorderEngine(
     private var videoTrackIndex = -1
     private var videoStarted = false
 
+    // Encoder dimensions actually used. These may differ from the requested
+    // cfg.widthPx/heightPx because hardware encoders require the width/height
+    // to be aligned (commonly to a multiple of 16). The VirtualDisplay must
+    // use the SAME dimensions as the encoder input surface, so we compute
+    // these once in configureVideoEncoder and reuse them.
+    private var encWidth = 0
+    private var encHeight = 0
+
     private var audioPipeline: AudioPipeline? = null
 
     private var encoderDrainJob: Job? = null
@@ -171,15 +179,13 @@ class ScreenRecorderEngine(
     // Video encoder
     // ---------------------------------------------------------------------
     private fun configureVideoEncoder() {
-        val width = cfg.widthPx
-        val height = cfg.heightPx
-        
+        val reqWidth = cfg.widthPx
+        val reqHeight = cfg.heightPx
+
         // Validate dimensions
-        if (width <= 0 || height <= 0) {
-            throw IllegalArgumentException("Invalid video dimensions: ${width}x${height}")
+        if (reqWidth <= 0 || reqHeight <= 0) {
+            throw IllegalArgumentException("Invalid video dimensions: ${reqWidth}x${reqHeight}")
         }
-        
-        val fps = if (arr.hasArrSupport()) arr.suggestedFrameRate(cfg.frameRate) else cfg.frameRate
 
         // Determine codec priority: APV > HEVC > H.264 (fallback)
         val mimePreferences = buildList {
@@ -190,11 +196,59 @@ class ScreenRecorderEngine(
 
         var lastError: Throwable? = null
         for (mime in mimePreferences) {
+            var codec: MediaCodec? = null
             try {
-                val format = MediaFormat.createVideoFormat(mime, width, height).apply {
+                codec = MediaCodec.createEncoderByType(mime)
+
+                // Query what this specific encoder actually supports and snap
+                // the requested size to its alignment + bounds. This is the
+                // fix for devices like the Poco X6 5G (1220x2712) whose native
+                // resolution is NOT a multiple of 16 - the unaligned size made
+                // configure()/createInputSurface() fail and recording died
+                // immediately after the user granted the projection consent.
+                val caps = codec.codecInfo
+                    .getCapabilitiesForType(mime)
+                    .videoCapabilities
+
+                val wAlign = caps.widthAlignment.coerceAtLeast(2)
+                val hAlign = caps.heightAlignment.coerceAtLeast(2)
+
+                var aw = (reqWidth / wAlign) * wAlign
+                var ah = (reqHeight / hAlign) * hAlign
+                aw = aw.coerceIn(caps.supportedWidths.lower, caps.supportedWidths.upper)
+                ah = ah.coerceIn(caps.supportedHeights.lower, caps.supportedHeights.upper)
+                // Re-align after clamping to the supported range.
+                aw = (aw / wAlign) * wAlign
+                ah = (ah / hAlign) * hAlign
+
+                if (!caps.isSizeSupported(aw, ah)) {
+                    throw IllegalStateException(
+                        "Encoder $mime does not support ${aw}x${ah} (requested ${reqWidth}x${reqHeight})"
+                    )
+                }
+
+                // Clamp fps and bitrate to what the encoder allows at this size.
+                val baseFps = if (arr.hasArrSupport()) {
+                    arr.suggestedFrameRate(cfg.frameRate)
+                } else {
+                    cfg.frameRate
+                }
+                val maxFps = runCatching {
+                    caps.getSupportedFrameRatesFor(aw, ah).upper.toInt()
+                }.getOrDefault(baseFps)
+                val fps = baseFps.coerceIn(1, maxFps.coerceAtLeast(1))
+
+                val bitrate = runCatching {
+                    cfg.bitrateBps.coerceIn(
+                        caps.bitrateRange.lower,
+                        caps.bitrateRange.upper
+                    )
+                }.getOrDefault(cfg.bitrateBps)
+
+                val format = MediaFormat.createVideoFormat(mime, aw, ah).apply {
                     setInteger(MediaFormat.KEY_COLOR_FORMAT,
                         MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                    setInteger(MediaFormat.KEY_BIT_RATE, cfg.bitrateBps)
+                    setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                     setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                     setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
                     setInteger(MediaFormat.KEY_BITRATE_MODE,
@@ -203,16 +257,16 @@ class ScreenRecorderEngine(
                     // it actually supports. Forcing HEVCMainTierLevel51 was
                     // crashing on Dimensity/Snapdragon mid-range chips.
                 }
-                val codec = MediaCodec.createEncoderByType(mime)
                 codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 val surface = codec.createInputSurface()
-                if (surface == null) {
-                    throw IllegalStateException("createInputSurface returned null")
-                }
+                    ?: throw IllegalStateException("createInputSurface returned null")
                 inputSurface = surface
                 codec.start()
                 videoCodec = codec
-                Log.i(TAG, "Video encoder configured: $mime @ ${width}x${height} ${fps}fps")
+                encWidth = aw
+                encHeight = ah
+                Log.i(TAG, "Video encoder configured: $mime @ ${aw}x${ah} ${fps}fps " +
+                    "${bitrate}bps (requested ${reqWidth}x${reqHeight})")
                 arr.lockSurfaceFrameRate(surface, fps)
                 return // success
             } catch (t: Throwable) {
@@ -221,6 +275,8 @@ class ScreenRecorderEngine(
                 // Clean up partial initialization
                 runCatching { inputSurface?.release() }
                 inputSurface = null
+                runCatching { codec?.release() }
+                videoCodec = null
             }
         }
         // If all codecs failed, throw so the caller (start()) catches it
@@ -241,10 +297,14 @@ class ScreenRecorderEngine(
         val dm = context.getSystemService(DisplayManager::class.java)
             ?: throw IllegalStateException("DisplayManager unavailable")
         val surface = inputSurface ?: throw IllegalStateException("encoder surface missing")
+        // Use the aligned encoder dimensions, NOT the raw cfg dimensions, so
+        // the VirtualDisplay output matches the encoder input surface exactly.
+        val w = if (encWidth > 0) encWidth else cfg.widthPx
+        val h = if (encHeight > 0) encHeight else cfg.heightPx
         virtualDisplay = projection.createVirtualDisplay(
             "RecorderZy",
-            cfg.widthPx,
-            cfg.heightPx,
+            w,
+            h,
             cfg.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR or
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,

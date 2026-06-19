@@ -69,22 +69,27 @@ class RecorderBridge {
     }
   }
 
-  Future<bool> takeScreenshot({
+  Future<ScreenshotOutcome> takeScreenshot({
     required RecorderSettings settings,
     required DisplayInfo display,
   }) async {
     try {
-      final ok = await _recorderChannel.invokeMethod<bool>(
+      final res = await _recorderChannel.invokeMethod<String>(
         'takeScreenshot',
         {
           'config': _buildConfig(settings, display),
           'scalePercent': settings.screenshotScale.percent,
         },
       );
-      return ok ?? false;
+      return switch (res) {
+        'saved' => ScreenshotOutcome.saved,
+        'needs_accessibility' => ScreenshotOutcome.needsAccessibility,
+        'unsupported' => ScreenshotOutcome.unsupported,
+        _ => ScreenshotOutcome.failed,
+      };
     } catch (e) {
       print('RecorderBridge.takeScreenshot error: $e');
-      return false;
+      return ScreenshotOutcome.failed;
     }
   }
 
@@ -188,6 +193,11 @@ RecorderPhase _phaseFrom(String name) {
 }
 
 enum RecorderPhase { idle, recording, paused }
+
+/// Outcome of a screenshot request. Screenshots use the accessibility service
+/// (a real screenshot), so they can fail specifically because that service
+/// isn't enabled yet.
+enum ScreenshotOutcome { saved, needsAccessibility, unsupported, failed }
 
 @immutable
 class RecorderState {

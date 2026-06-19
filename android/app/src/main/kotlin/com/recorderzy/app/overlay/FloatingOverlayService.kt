@@ -399,10 +399,39 @@ class FloatingOverlayService : Service() {
     }
 
     private fun onScreenshotClicked() {
-        // Use auto-config so the screenshot just works at native resolution,
-        // even when the user hasn't customised settings yet.
-        val cfg = RecorderLauncher.autoConfig(this)
-        runCatching { RecorderLauncher.takeScreenshot(this, cfg, scalePercent = 100) }
+        // Real screenshot via the accessibility service - no MediaProjection /
+        // screen-record consent. Requires the RecorderZy accessibility service
+        // to be enabled.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val svc = TouchIndicatorService.instance
+            if (svc != null) {
+                svc.captureScreenshot(scalePercent = 100) { uri ->
+                    mainHandler.post {
+                        android.widget.Toast.makeText(
+                            this,
+                            if (uri != null) "Screenshot saved to Pictures/RecorderZy"
+                            else "Screenshot failed",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                return
+            }
+        }
+        // Accessibility service not available - guide the user to enable it.
+        mainHandler.post {
+            android.widget.Toast.makeText(
+                this,
+                "Enable the RecorderZy accessibility service to take screenshots",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            runCatching {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
     }
 
     private fun onSettingsClicked() {

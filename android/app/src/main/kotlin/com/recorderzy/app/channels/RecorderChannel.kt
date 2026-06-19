@@ -1,6 +1,8 @@
 package com.recorderzy.app.channels
 
 import android.app.Activity
+import android.os.Build
+import com.recorderzy.app.overlay.TouchIndicatorService
 import com.recorderzy.app.recorder.RecorderConfig
 import com.recorderzy.app.recorder.RecorderLauncher
 import com.recorderzy.app.recorder.RecorderStateBus
@@ -108,17 +110,30 @@ class RecorderChannel(
     }
 
     private fun handleScreenshot(call: MethodCall, result: MethodChannel.Result) {
-        val cfgMap = call.argument<Map<String, Any?>>("config")
-            ?: return result.error("ARG", "Missing config", null)
+        // Screenshots use the AccessibilityService takeScreenshot() API - a
+        // REAL screenshot that needs no screen-recording / MediaProjection
+        // consent dialog. The user must have enabled the RecorderZy
+        // accessibility service once; if not, we report 'needs_accessibility'
+        // so the Flutter UI can guide them to the settings screen.
         val scale = (call.argument<Int>("scalePercent") ?: 100).coerceIn(25, 100)
-        val cfg = RecorderConfig.fromMap(cfgMap)
 
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.success("unsupported")
+            return
+        }
+        val svc = TouchIndicatorService.instance
+        if (svc == null) {
+            result.success("needs_accessibility")
+            return
+        }
         try {
-            RecorderLauncher.takeScreenshot(activity, cfg, scale) { ok ->
-                result.success(ok)
+            svc.captureScreenshot(scale) { uri ->
+                activity.runOnUiThread {
+                    result.success(if (uri != null) "saved" else "failed")
+                }
             }
         } catch (e: Throwable) {
-            result.error("PROJECTION", "Failed to request projection: ${e.message}", null)
+            result.success("failed")
         }
     }
 

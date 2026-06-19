@@ -2,18 +2,26 @@ package com.recorderzy.app.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.view.Display
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.FrameLayout
+import androidx.annotation.RequiresApi
+import com.recorderzy.app.recorder.MediaStoreWriter
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 /**
  * Lightweight global touch-indicator overlay implemented as an
@@ -40,6 +48,7 @@ class TouchIndicatorService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         configureService()
         attachOverlay()
     }
@@ -135,15 +144,110 @@ class TouchIndicatorService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
+        instance = null
         rootView?.let { runCatching { windowManager?.removeView(it) } }
         rootView = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        instance = null
         rootView?.let { runCatching { windowManager?.removeView(it) } }
         rootView = null
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
+    }
+
+    companion object {
+        private const val TAG = "TouchIndicator"
+
+        /**
+         * Live reference to the connected accessibility service, used to drive
+         * real (non-MediaProjection) screenshots. Null when the user hasn't
+         * enabled "RecorderZy" under Accessibility settings.
+         */
+        @Volatile
+        var instance: TouchIndicatorService? = null
+            private set
+
+        /** Whether a real screenshot can be taken right now. */
+        fun canCaptureScreenshot(): Boolean =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && instance != null
+    }
+
+    /**
+     * Takes a real screenshot of the default display via the Accessibility
+     * service `takeScreenshot()` API (no screen-recording / MediaProjection
+     * consent needed) and saves it to Pictures/RecorderZy. The result URI is
+     * delivered on a background thread - callers should marshal back to their
+     * own thread if needed.
+     */
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun captureScreenshot(scalePercent: Int, onResult: (Uri?) -> Unit) {
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                executor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        val uri = try {
+                            saveScreenshot(screenshot, scalePercent)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "Failed to save screenshot: ${t.message}", t)
+                            null
+                        } finally {
+                            executor.shutdown()
+                        }
+                        onResult(uri)
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.e(TAG, "takeScreenshot failed, errorCode=$errorCode")
+                        executor.shutdown()
+                        onResult(null)
+                    }
+                }
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "takeScreenshot threw: ${t.message}", t)
+            runCatching { executor.shutdown() }
+            onResult(null)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun saveScreenshot(screenshot: ScreenshotResult, scalePercent: Int): Uri? {
+        val hardwareBuffer = screenshot.hardwareBuffer
+        try {
+            val raw = Bitmap.wrapHardwareBuffer(hardwareBuffer, screenshot.colorSpace)
+                ?: return null
+            // Copy out of the hardware buffer into a software bitmap we can
+            // compress, then release the hardware bitmap.
+            var bmp = raw.copy(Bitmap.Config.ARGB_8888, false)
+            raw.recycle()
+            if (bmp == null) return null
+
+            if (scalePercent in 25..99) {
+                val nw = (bmp.width * scalePercent / 100).coerceAtLeast(1)
+                val nh = (bmp.height * scalePercent / 100).coerceAtLeast(1)
+                val scaled = Bitmap.createScaledBitmap(bmp, nw, nh, true)
+                if (scaled !== bmp) bmp.recycle()
+                bmp = scaled
+            }
+
+            val baos = ByteArrayOutputStream(256 * 1024)
+            bmp.compress(Bitmap.CompressFormat.JPEG, 95, baos)
+            bmp.recycle()
+
+            return MediaStoreWriter.writeImage(
+                applicationContext,
+                baos.toByteArray(),
+                "RecorderZy-${System.currentTimeMillis()}",
+                "image/jpeg"
+            )
+        } finally {
+            runCatching { hardwareBuffer.close() }
+        }
     }
 }

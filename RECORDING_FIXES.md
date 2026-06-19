@@ -251,3 +251,66 @@ microphone audio instead of recording silently.
    ```bash
    adb logcat | grep -E "ScreenRecorderService|ScreenRecorderEngine|Screenshotter|AudioPipeline"
    ```
+
+
+---
+
+# Round 3: Recording fails after consent + real (non-projection) screenshots
+
+After Round 2 the service started correctly, but two device-specific problems
+remained on the Poco X6 5G (Android 16, screen 1220x2712).
+
+## Recording: encoder dimension alignment
+
+The screen resolution **1220 x 2712** is not a multiple of 16. Hardware
+H.264/HEVC encoders (Dimensity 6080) require width/height aligned to their
+reported alignment (usually 16). The unaligned size made `MediaCodec.configure()`
+/ `createInputSurface()` fail right after consent, so recording failed.
+
+**Fix (`ScreenRecorderEngine.configureVideoEncoder`):**
+- Query the chosen encoder's `VideoCapabilities` and snap the requested size
+  to its `widthAlignment`/`heightAlignment`, then clamp into the supported
+  width/height range.
+- Verify with `isSizeSupported()` before configuring; fall through to the next
+  codec (HEVC -> H.264) if not.
+- Clamp the frame rate and bitrate to the encoder's supported ranges too.
+- The `VirtualDisplay` now uses these aligned dimensions so it matches the
+  encoder input surface exactly.
+
+For the Poco X6 5G this records at 1216x2704 (a 4px/8px crop) instead of
+failing.
+
+## Screenshots now use a REAL screenshot (no screen recording)
+
+Screenshots no longer go through MediaProjection at all. They use the
+`AccessibilityService.takeScreenshot()` API via the existing
+`TouchIndicatorService`, so there is **no "Start recording or casting" consent
+dialog** for a screenshot.
+
+**Changes:**
+- `res/xml/touch_indicator_service.xml`: added `android:canTakeScreenshot="true"`
+  (required, or `takeScreenshot()` throws SecurityException).
+- `TouchIndicatorService`: holds a static `instance`, exposes
+  `captureScreenshot()` that grabs the screen, scales/encodes to JPEG, and
+  saves to `Pictures/RecorderZy`.
+- `RecorderChannel.takeScreenshot`: routes to the accessibility service and
+  returns `saved` / `failed` / `needs_accessibility` / `unsupported`.
+- Flutter `home_screen`: shows a real result and, when the accessibility
+  service isn't enabled, a SnackBar with an "Enable" action that opens
+  Accessibility settings.
+- Floating overlay screenshot button: same accessibility path.
+
+Trade-off: the user must enable the "RecorderZy" accessibility service once.
+This is the only way for a normal app to take a true full-screen screenshot
+without a screen-record consent prompt.
+
+## Files changed (Round 3)
+
+1. `android/.../recorder/ScreenRecorderEngine.kt` — encoder size/fps/bitrate
+   alignment + aligned VirtualDisplay.
+2. `android/.../overlay/TouchIndicatorService.kt` — accessibility screenshot.
+3. `android/.../channels/RecorderChannel.kt` — screenshot routes to a11y.
+4. `android/.../overlay/FloatingOverlayService.kt` — overlay screenshot a11y.
+5. `android/.../res/xml/touch_indicator_service.xml` — canTakeScreenshot.
+6. `lib/core/platform/recorder_bridge.dart` — ScreenshotOutcome.
+7. `lib/ui/home_screen.dart` — outcome handling + enable-accessibility prompt.
