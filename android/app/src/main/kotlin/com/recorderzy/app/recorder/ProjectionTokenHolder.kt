@@ -18,28 +18,43 @@ import android.content.Intent
  * Holding the token in a static avoids the parcel round-trip entirely; both
  * the projection consent Activity and the recorder Service live in the same
  * process so a plain reference is safe.
+ *
+ * IMPORTANT: validity is tracked with an explicit [hasToken] flag, NOT by
+ * sentinel-checking [resultCode]. `Activity.RESULT_OK` is -1, so using -1 as
+ * an "empty" marker would discard every *granted* projection (the exact cause
+ * of the "No screen capture permission" failures).
  */
 object ProjectionTokenHolder {
-    @Volatile var resultCode: Int = -1
-    @Volatile var data: Intent? = null
+    @Volatile private var resultCode: Int = 0
+    @Volatile private var data: Intent? = null
+    @Volatile private var hasToken: Boolean = false
 
     fun set(resultCode: Int, data: Intent) {
-        this.resultCode = resultCode
-        this.data = data
+        synchronized(this) {
+            this.resultCode = resultCode
+            this.data = data
+            this.hasToken = true
+        }
     }
 
     fun take(): Pair<Int, Intent>? {
-        val rc = resultCode
-        val d = data
-        if (rc == -1 || d == null) return null
-        // Single-use: clear after read so a stale token can't cause confusion.
-        resultCode = -1
-        data = null
-        return rc to d
+        synchronized(this) {
+            if (!hasToken) return null
+            val d = data ?: return null
+            val rc = resultCode
+            // Single-use: clear after read so a stale token can't cause confusion.
+            resultCode = 0
+            data = null
+            hasToken = false
+            return rc to d
+        }
     }
 
     fun clear() {
-        resultCode = -1
-        data = null
+        synchronized(this) {
+            resultCode = 0
+            data = null
+            hasToken = false
+        }
     }
 }
