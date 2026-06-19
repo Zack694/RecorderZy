@@ -99,6 +99,7 @@ class ScreenRecorderService : Service() {
         // See ProjectionTokenHolder for why.
         val (resultCode, data) = ProjectionTokenHolder.take() ?: run {
             Log.w(TAG, "handleStart: no projection token available")
+            showErrorNotification("Recording failed", "No screen capture permission")
             stopForegroundCompat()
             stopSelf()
             return
@@ -110,6 +111,7 @@ class ScreenRecorderService : Service() {
         val mgr = getSystemService(MediaProjectionManager::class.java)
         if (mgr == null) {
             Log.e(TAG, "MediaProjectionManager is null")
+            showErrorNotification("Recording failed", "System service unavailable")
             stopForegroundCompat()
             stopSelf()
             return
@@ -119,11 +121,13 @@ class ScreenRecorderService : Service() {
             mgr.getMediaProjection(resultCode, data)
         } catch (e: Throwable) {
             Log.e(TAG, "getMediaProjection threw: ${e.message}", e)
+            showErrorNotification("Recording failed", "Could not start screen capture")
             null
         }
 
         if (projection == null) {
             Log.e(TAG, "MediaProjectionManager.getMediaProjection returned null")
+            showErrorNotification("Recording failed", "Could not start screen capture")
             stopForegroundCompat()
             stopSelf()
             return
@@ -137,12 +141,22 @@ class ScreenRecorderService : Service() {
                     ScreenRecorderEngine.State.RECORDING -> postNotification(paused = false)
                     ScreenRecorderEngine.State.PAUSED -> postNotification(paused = true)
                     ScreenRecorderEngine.State.STOPPED -> publishOutputAndStop()
-                    ScreenRecorderEngine.State.ERROR -> publishOutputAndStop()
+                    ScreenRecorderEngine.State.ERROR -> {
+                        showErrorNotification("Recording error", "An error occurred during recording")
+                        publishOutputAndStop()
+                    }
                     else -> Unit
                 }
             }.also { it.start() }
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to start recording engine: ${e.message}", e)
+            val errorMsg = when {
+                e.message?.contains("codec", ignoreCase = true) == true -> "Video encoder unavailable"
+                e.message?.contains("dimension", ignoreCase = true) == true -> "Invalid video settings"
+                e.message?.contains("cache", ignoreCase = true) == true -> "Storage unavailable"
+                else -> "Could not start recording"
+            }
+            showErrorNotification("Recording failed", errorMsg)
             runCatching { projection.stop() }
             this.projection = null
             stopForegroundCompat()
@@ -203,16 +217,39 @@ class ScreenRecorderService : Service() {
     private fun publishOutputAndStop() {
         val file = engine?.outputFile()
         engine = null
-        runCatching {
-            if (file != null && file.exists() && file.length() > 0) {
-                val uri = MediaStoreWriter.newVideoUri(applicationContext, "RecorderZy-${System.currentTimeMillis()}.mp4")
-                if (uri != null) {
-                    MediaStoreWriter.copyFileTo(applicationContext, file, uri)
-                    MediaStoreWriter.finalizeVideo(applicationContext, uri)
+        
+        try {
+            if (file != null && file.exists()) {
+                if (file.length() > 0) {
+                    Log.i(TAG, "Publishing video file: ${file.name} (${file.length()} bytes)")
+                    val uri = MediaStoreWriter.newVideoUri(
+                        applicationContext, 
+                        "RecorderZy-${System.currentTimeMillis()}.mp4"
+                    )
+                    if (uri != null) {
+                        MediaStoreWriter.copyFileTo(applicationContext, file, uri)
+                        MediaStoreWriter.finalizeVideo(applicationContext, uri)
+                        Log.i(TAG, "Video saved successfully to: $uri")
+                        showSuccessNotification("Recording saved", "Tap to view")
+                    } else {
+                        Log.e(TAG, "Failed to create MediaStore URI")
+                        showErrorNotification("Save failed", "Could not save to gallery")
+                    }
+                } else {
+                    Log.w(TAG, "Output file is empty (0 bytes)")
+                    showErrorNotification("Recording failed", "No video data captured")
                 }
                 file.delete()
+            } else {
+                Log.w(TAG, "No output file to publish")
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to publish output: ${e.message}", e)
+            showErrorNotification("Save failed", "Could not save recording")
         }
+        
+        runCatching { projection?.stop() }
+        projection = null
         stopForegroundCompat()
         stopSelf()
     }
@@ -298,6 +335,52 @@ class ScreenRecorderService : Service() {
             }
         } catch (e: Throwable) {
             Log.w(TAG, "stopForeground failed: ${e.message}")
+        }
+    }
+
+    private fun showErrorNotification(title: String, message: String) {
+        runCatching {
+            val mgr = getSystemService(NotificationManager::class.java) ?: return
+            val openIntent = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val openPi = PendingIntent.getActivity(
+                this, 0, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(this, MainApplication.CHANNEL_RECORDING)
+                .setSmallIcon(R.drawable.ic_close)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setOngoing(false)
+                .setAutoCancel(true)
+                .setContentIntent(openPi)
+                .setCategory(Notification.CATEGORY_ERROR)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+            mgr.notify(NOTIF_ID + 1, notification)
+        }
+    }
+
+    private fun showSuccessNotification(title: String, message: String) {
+        runCatching {
+            val mgr = getSystemService(NotificationManager::class.java) ?: return
+            val openIntent = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val openPi = PendingIntent.getActivity(
+                this, 0, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(this, MainApplication.CHANNEL_RECORDING)
+                .setSmallIcon(R.drawable.ic_record_dot)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setOngoing(false)
+                .setAutoCancel(true)
+                .setContentIntent(openPi)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+            mgr.notify(NOTIF_ID + 1, notification)
         }
     }
 

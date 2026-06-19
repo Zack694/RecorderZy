@@ -112,17 +112,23 @@ class AudioPipeline(
                 )
                 if (record.state == AudioRecord.STATE_INITIALIZED) {
                     micRecord = record
+                    Log.i(TAG, "Microphone AudioRecord initialized successfully")
                     if (noiseSuppression && NoiseSuppressor.isAvailable()) {
                         noiseSuppressor = runCatching {
-                            NoiseSuppressor.create(record.audioSessionId).also { it.enabled = true }
+                            NoiseSuppressor.create(record.audioSessionId).also { 
+                                it.enabled = true
+                                Log.i(TAG, "Noise suppressor enabled")
+                            }
                         }.getOrNull()
                     }
                 } else {
-                    Log.w(TAG, "Mic AudioRecord failed to initialize (permission missing?)")
+                    Log.w(TAG, "Mic AudioRecord failed to initialize (state=${record.state}, permission missing?)")
                     runCatching { record.release() }
                 }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "RECORD_AUDIO permission not granted: ${e.message}")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to create mic AudioRecord: ${e.message}")
+                Log.w(TAG, "Failed to create mic AudioRecord: ${e.message}", e)
             }
         }
         if (mode == RecorderConfig.AudioMode.INTERNAL || mode == RecorderConfig.AudioMode.BOTH) {
@@ -146,23 +152,36 @@ class AudioPipeline(
                         .build()
                     if (record.state == AudioRecord.STATE_INITIALIZED) {
                         internalRecord = record
+                        Log.i(TAG, "Internal audio AudioRecord initialized successfully")
                     } else {
-                        Log.w(TAG, "Internal AudioRecord failed to initialize")
+                        Log.w(TAG, "Internal AudioRecord failed to initialize (state=${record.state})")
                         runCatching { record.release() }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to create internal AudioRecord: ${e.message}")
+                    Log.w(TAG, "Failed to create internal AudioRecord: ${e.message}", e)
                 }
+            } else {
+                Log.w(TAG, "Internal audio capture requires Android Q+ (current: ${Build.VERSION.SDK_INT})")
             }
         }
+        
+        // Log final audio setup
+        val micOk = micRecord != null
+        val intOk = internalRecord != null
+        Log.i(TAG, "Audio setup complete - Mic: $micOk, Internal: $intOk, Mode: $mode")
     }
 
     private suspend fun runCaptureLoop() {
         val codec = encoder ?: return
         val info = MediaCodec.BufferInfo()
 
-        micRecord?.startRecording()
-        internalRecord?.startRecording()
+        try {
+            micRecord?.startRecording()
+            internalRecord?.startRecording()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start AudioRecord: ${e.message}", e)
+            return
+        }
 
         val frameSize = 1024
         val micBuf = ShortArray(frameSize)
@@ -173,6 +192,8 @@ class AudioPipeline(
         var ptsUs = 0L
         val usPerFrame = 1_000_000L * frameSize / sampleRate
 
+        Log.i(TAG, "Audio capture loop started")
+        
         while (!stopped && (captureJob?.isActive == true)) {
             // While paused we still drain the AudioRecord buffers to avoid an
             // overflow but we throw the data away. PTS is left untouched so
@@ -200,17 +221,21 @@ class AudioPipeline(
             if (produced <= 0) continue
 
             // Push voiced PCM into the AAC encoder.
-            val inIdx = codec.dequeueInputBuffer(10_000)
-            if (inIdx >= 0) {
-                val inputBuf = codec.getInputBuffer(inIdx) ?: continue
-                inputBuf.clear()
-                val byteBuf = java.nio.ByteBuffer.allocate(produced * 2).apply {
-                    order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                    asShortBuffer().put(voiced, 0, produced)
-                }.array()
-                inputBuf.put(byteBuf)
-                codec.queueInputBuffer(inIdx, 0, produced * 2, ptsUs, 0)
-                ptsUs += usPerFrame
+            try {
+                val inIdx = codec.dequeueInputBuffer(10_000)
+                if (inIdx >= 0) {
+                    val inputBuf = codec.getInputBuffer(inIdx) ?: continue
+                    inputBuf.clear()
+                    val byteBuf = java.nio.ByteBuffer.allocate(produced * 2).apply {
+                        order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        asShortBuffer().put(voiced, 0, produced)
+                    }.array()
+                    inputBuf.put(byteBuf)
+                    codec.queueInputBuffer(inIdx, 0, produced * 2, ptsUs, 0)
+                    ptsUs += usPerFrame
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error queueing audio input: ${e.message}")
             }
 
             // Drain encoded AAC frames -> muxer.
@@ -218,11 +243,17 @@ class AudioPipeline(
         }
 
         // EOS flush.
-        val inIdx = codec.dequeueInputBuffer(10_000)
-        if (inIdx >= 0) {
-            codec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        try {
+            val inIdx = codec.dequeueInputBuffer(10_000)
+            if (inIdx >= 0) {
+                codec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            }
+            drainEncoder(codec, info, untilEos = true)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error during EOS flush: ${e.message}")
         }
-        drainEncoder(codec, info, untilEos = true)
+        
+        Log.i(TAG, "Audio capture loop finished")
     }
 
     private fun mixInto(

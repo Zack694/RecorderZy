@@ -69,14 +69,26 @@ class ScreenRecorderEngine(
         try {
             onState(State.STARTING)
 
+            // Validate cache directory exists and is writable
+            val cacheDir = context.cacheDir
+            if (!cacheDir.exists() && !cacheDir.mkdirs()) {
+                throw IllegalStateException("Cache directory unavailable")
+            }
+
             // Cache file we'll later move into the public MediaStore album.
-            val out = File(context.cacheDir, "recorderzy_${System.currentTimeMillis()}.mp4")
+            val out = File(cacheDir, "recorderzy_${System.currentTimeMillis()}.mp4")
             workingFile = out
             muxer = SafeMuxer(out.absolutePath)
 
             configureVideoEncoder()
             configureVirtualDisplay()
             startAudioPipeline()
+            
+            // Verify muxer is ready before starting drain
+            if (muxer == null) {
+                throw IllegalStateException("Muxer initialization failed")
+            }
+            
             startEncoderDrain()
 
             adpf.start(engineScope)
@@ -89,11 +101,13 @@ class ScreenRecorderEngine(
             // leave the bus in an inconsistent RECORDING state.
             RecorderStateBus.publishPhase(RecorderStateBus.Phase.RECORDING)
             onState(State.RECORDING)
+            Log.i(TAG, "Recording engine started successfully")
         } catch (t: Throwable) {
             Log.e(TAG, "Failed to start engine: ${t.message}", t)
             RecorderStateBus.reset()
             onState(State.ERROR)
-            stop()
+            releaseAll()
+            throw t // Re-throw so service can handle it
         }
     }
 
@@ -159,6 +173,12 @@ class ScreenRecorderEngine(
     private fun configureVideoEncoder() {
         val width = cfg.widthPx
         val height = cfg.heightPx
+        
+        // Validate dimensions
+        if (width <= 0 || height <= 0) {
+            throw IllegalArgumentException("Invalid video dimensions: ${width}x${height}")
+        }
+        
         val fps = if (arr.hasArrSupport()) arr.suggestedFrameRate(cfg.frameRate) else cfg.frameRate
 
         // Determine codec priority: APV > HEVC > H.264 (fallback)
@@ -185,19 +205,26 @@ class ScreenRecorderEngine(
                 }
                 val codec = MediaCodec.createEncoderByType(mime)
                 codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                inputSurface = codec.createInputSurface()
+                val surface = codec.createInputSurface()
+                if (surface == null) {
+                    throw IllegalStateException("createInputSurface returned null")
+                }
+                inputSurface = surface
                 codec.start()
                 videoCodec = codec
                 Log.i(TAG, "Video encoder configured: $mime @ ${width}x${height} ${fps}fps")
-                inputSurface?.let { arr.lockSurfaceFrameRate(it, fps) }
+                arr.lockSurfaceFrameRate(surface, fps)
                 return // success
             } catch (t: Throwable) {
-                Log.w(TAG, "Encoder $mime failed, trying next: ${t.message}")
+                Log.w(TAG, "Encoder $mime failed, trying next: ${t.message}", t)
                 lastError = t
+                // Clean up partial initialization
+                runCatching { inputSurface?.release() }
+                inputSurface = null
             }
         }
         // If all codecs failed, throw so the caller (start()) catches it
-        throw IllegalStateException("All video encoders failed", lastError)
+        throw IllegalStateException("All video encoders failed. Last error: ${lastError?.message}", lastError)
     }
 
     private fun supportsApv(): Boolean {
@@ -244,18 +271,21 @@ class ScreenRecorderEngine(
     }
 
     private fun startEncoderDrain() {
-        val codec = videoCodec ?: return
-        val mux = muxer ?: return
+        val codec = videoCodec ?: throw IllegalStateException("Video codec not initialized")
+        val mux = muxer ?: throw IllegalStateException("Muxer not initialized")
         encoderDrainJob = engineScope.launch {
             val info = MediaCodec.BufferInfo()
             try {
+                Log.i(TAG, "Video encoder drain loop started")
                 while (isActive) {
                     val outIdx = codec.dequeueOutputBuffer(info, 10_000)
                     when {
                         outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> continue
                         outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (videoStarted) continue
-                            videoTrackIndex = mux.addTrack(codec.outputFormat)
+                            val format = codec.outputFormat
+                            Log.i(TAG, "Video encoder format ready: $format")
+                            videoTrackIndex = mux.addTrack(format)
                             videoStarted = true
                             mux.maybeStart()
                             if (cfg.audioMode == RecorderConfig.AudioMode.MUTE) {
@@ -272,12 +302,15 @@ class ScreenRecorderEngine(
                                 }
                             }
                             codec.releaseOutputBuffer(outIdx, false)
-                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                                Log.i(TAG, "Video encoder reached EOS")
+                                break
+                            }
                         }
                     }
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "Encoder drain stopped: ${t.message}")
+                Log.e(TAG, "Encoder drain stopped with error: ${t.message}", t)
             }
         }
     }
