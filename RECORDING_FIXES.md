@@ -166,3 +166,88 @@ If you still experience crashes:
 - Microphone requires RECORD_AUDIO permission
 - Screen recording requires user consent via MediaProjection dialog
 - Some devices may not support HEVC encoding (falls back to H.264)
+
+
+---
+
+# Round 2: "Nothing happens" on Android 14+/16 (Poco X6 5G)
+
+This round fixes the actual reason recording and screenshots did nothing on
+Android 14, 15, and 16 devices (including HyperOS / Poco X6 5G).
+
+## Root Cause #1 (the killer): Microphone FGS type without permission
+
+`ScreenRecorderService` always started the foreground service with the
+`microphone` service type:
+
+```kotlin
+t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE   // unconditional
+```
+
+On Android 14+ (API 34+), `startForeground()` with the `microphone` type
+throws `SecurityException` when `RECORD_AUDIO` has **not** been granted. That
+happens in STEP 1 of `onStartCommand`, before any recording work — so the
+service immediately hit its catch block and called `stopSelf()`.
+
+Result: **no recording, no screenshot, and no visible crash** — exactly the
+reported symptom. A fresh install hasn't granted the mic permission, so
+everything silently failed.
+
+**Fix:** `foregroundTypes(action)` now only adds the `microphone` type when:
+1. It's a recording session (never for one-shot screenshots),
+2. `RECORD_AUDIO` is actually granted, and
+3. The selected audio mode actually uses the mic (MIC or BOTH).
+
+`mediaProjection` is always safe to declare. Recording now starts even
+without mic permission (video-only / internal audio), instead of dying.
+
+## Root Cause #2: Screenshot never registered a projection callback
+
+Android 14+ requires a `MediaProjection.Callback` to be registered **before**
+`createVirtualDisplay()`, or it throws `IllegalStateException`. The recording
+path did this; the standalone screenshot path did not — so screenshots threw
+and silently failed.
+
+**Fix:** `handleScreenshot()` now registers the callback right after seeding
+the projection from the token holder.
+
+## Root Cause #3: The lying "saved" toast
+
+The Flutter UI showed "Screenshot saved to Pictures/RecorderZy" whenever
+screen-capture permission was *granted* — not when a file was actually
+written. Since capture was failing (causes #1/#2), the file never existed.
+
+**Fix:**
+- The native service now posts a real success/failure notification based on
+  whether the image URI was actually created.
+- The Flutter toast no longer claims success; it says the capture was
+  requested and to check notifications.
+- `Screenshotter` got a 4-second timeout fallback so it can't hang the
+  foreground service forever if a frame never arrives, plus double-callback
+  protection.
+
+## Extra UX fix: request mic/notification permission before recording
+
+`_startRecording` now requests `POST_NOTIFICATIONS` and (when the audio mode
+needs it) `RECORD_AUDIO` up front, so a first-time user actually captures
+microphone audio instead of recording silently.
+
+## Files changed (Round 2)
+
+1. `android/.../recorder/ScreenRecorderService.kt` — conditional FGS types,
+   screenshot callback registration, real screenshot result notifications.
+2. `android/.../recorder/Screenshotter.kt` — timeout fallback + safe cleanup.
+3. `lib/ui/home_screen.dart` — proactive permission requests, honest toast.
+
+## How to verify on the Poco X6 5G
+
+1. Fresh install, hit **Start recording**, pick "Entire screen" → it should
+   now actually record (you'll see the timer and a recording notification).
+2. Stop → check for a "Recording saved" notification and the file under
+   `Movies/RecorderZy`.
+3. Hit **Screenshot** → check for a "Screenshot saved" notification and a file
+   under `Pictures/RecorderZy`.
+4. If anything still fails, capture logs:
+   ```bash
+   adb logcat | grep -E "ScreenRecorderService|ScreenRecorderEngine|Screenshotter|AudioPipeline"
+   ```

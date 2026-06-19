@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../core/platform/recorder_bridge.dart';
 import '../core/settings/settings_controller.dart';
+import '../core/settings/settings_model.dart';
 import 'settings_screen.dart';
 import 'widgets/animated_drawer.dart';
 import 'widgets/section_card.dart';
@@ -75,9 +76,31 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startRecording() async {
+    final settings = widget.settings.value;
+
+    // Notifications are required for the foreground-service recording
+    // notification on Android 13+. Request it up front.
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+
+    // If the user picked an audio mode that needs the microphone, make sure
+    // RECORD_AUDIO is granted BEFORE we start. On Android 14+ the recording
+    // service can only declare the microphone foreground-service type when
+    // this permission is held, otherwise audio is silently dropped.
+    final needsMic =
+        settings.audioMode == AudioMode.mic || settings.audioMode == AudioMode.both;
+    if (needsMic && !await Permission.microphone.isGranted) {
+      final status = await Permission.microphone.request();
+      if (!mounted) return;
+      if (!status.isGranted) {
+        _toast('Microphone denied - recording will continue without mic audio.');
+      }
+    }
+
     final display = _display ?? await _bridge.displayMetrics();
     final ok = await _bridge.startRecording(
-      settings: widget.settings.value,
+      settings: settings,
       display: display,
     );
     if (!mounted) return;
@@ -93,8 +116,13 @@ class _HomeScreenState extends State<HomeScreen> {
       display: display,
     );
     if (!mounted) return;
+    // `ok` only reflects whether screen-capture permission was granted - the
+    // actual file write happens asynchronously in the native service, which
+    // posts its own success/failure notification. So we avoid claiming the
+    // screenshot was "saved" here (that message used to show even when no
+    // file was ever written).
     _toast(ok
-        ? 'Screenshot saved to Pictures/RecorderZy.'
+        ? 'Capturing screenshot... check your notifications.'
         : 'Screen capture permission was declined.');
   }
 

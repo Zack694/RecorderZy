@@ -48,7 +48,7 @@ class ScreenRecorderService : Service() {
             val phase = RecorderStateBus.phase.value
             val paused = phase == RecorderStateBus.Phase.PAUSED
             val withScreenshot = action == ACTION_SCREENSHOT && phase == RecorderStateBus.Phase.IDLE
-            startForegroundSafely(buildNotification(paused = paused, withScreenshot = withScreenshot))
+            startForegroundSafely(buildNotification(paused = paused, withScreenshot = withScreenshot), action)
         } catch (e: Throwable) {
             // If we can't even enter foreground, log and bail out. The system
             // will already be unhappy but we won't make it worse.
@@ -182,29 +182,62 @@ class ScreenRecorderService : Service() {
             // No active session - need to seed projection from the holder.
             val (resultCode, data) = ProjectionTokenHolder.take() ?: run {
                 Log.w(TAG, "Cannot screenshot: no projection token")
+                showErrorNotification("Screenshot failed", "No screen capture permission")
                 stopForegroundCompat()
                 stopSelf()
                 return
             }
-            getSystemService(MediaProjectionManager::class.java)
-                ?.getMediaProjection(resultCode, data)
-                ?.also { projection = it } ?: run {
+            val seeded = try {
+                getSystemService(MediaProjectionManager::class.java)
+                    ?.getMediaProjection(resultCode, data)
+            } catch (e: Throwable) {
+                Log.e(TAG, "getMediaProjection threw for screenshot: ${e.message}", e)
+                null
+            }
+            if (seeded == null) {
                 Log.e(TAG, "getMediaProjection returned null for screenshot")
+                showErrorNotification("Screenshot failed", "Could not start screen capture")
                 stopForegroundCompat()
                 stopSelf()
                 return
             }
+            projection = seeded
+            // ANDROID 14+ REQUIREMENT: a MediaProjection.Callback MUST be
+            // registered before createVirtualDisplay() or it throws
+            // IllegalStateException. The recording path already does this in
+            // handleStart(); the standalone screenshot path previously did
+            // not, which is why screenshots silently failed.
+            seeded.registerCallback(projectionCallback, null)
+            seeded
         }
 
-        Screenshotter.capture(
-            applicationContext,
-            proj,
-            cfg.widthPx,
-            cfg.heightPx,
-            cfg.densityDpi,
-            scalePercent = scalePercent,
-        ) { _ ->
-            // If we don't have an active recording session, tear the projection down.
+        try {
+            Screenshotter.capture(
+                applicationContext,
+                proj,
+                cfg.widthPx,
+                cfg.heightPx,
+                cfg.densityDpi,
+                scalePercent = scalePercent,
+            ) { uri ->
+                if (uri != null) {
+                    Log.i(TAG, "Screenshot saved: $uri")
+                    showSuccessNotification("Screenshot saved", "Saved to Pictures/RecorderZy")
+                } else {
+                    Log.e(TAG, "Screenshot capture returned no URI")
+                    showErrorNotification("Screenshot failed", "Could not capture the screen")
+                }
+                // If we don't have an active recording session, tear the projection down.
+                if (engine == null) {
+                    runCatching { proj.stop() }
+                    projection = null
+                    stopForegroundCompat()
+                    stopSelf()
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Screenshot capture failed: ${e.message}", e)
+            showErrorNotification("Screenshot failed", "Could not capture the screen")
             if (engine == null) {
                 runCatching { proj.stop() }
                 projection = null
@@ -260,21 +293,51 @@ class ScreenRecorderService : Service() {
         }
     }
 
-    private fun startForegroundSafely(notification: Notification) {
+    private fun startForegroundSafely(notification: Notification, action: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, foregroundTypes())
+            startForeground(NOTIF_ID, notification, foregroundTypes(action))
         } else {
             startForeground(NOTIF_ID, notification)
         }
     }
 
-    private fun foregroundTypes(): Int {
+    /**
+     * Compute the foreground-service types to declare at runtime.
+     *
+     * CRITICAL ANDROID 14+ BUG FIX:
+     *   On Android 14+ (API 34+) calling startForeground() with
+     *   FOREGROUND_SERVICE_TYPE_MICROPHONE throws SecurityException when the
+     *   RECORD_AUDIO runtime permission has NOT been granted. That exception
+     *   is thrown before any recording work happens, so the service dies and
+     *   "nothing happens" - no recording, no screenshot, no visible crash.
+     *
+     *   We therefore only add the MICROPHONE type when:
+     *     1. This is a recording session (never for one-shot screenshots), AND
+     *     2. RECORD_AUDIO is actually granted, AND
+     *     3. The pending config actually intends to capture the mic.
+     *
+     *   MEDIA_PROJECTION is always safe to declare because the user just
+     *   granted the projection consent token.
+     */
+    private fun foregroundTypes(action: String): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
         var t = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            if (action != ACTION_SCREENSHOT && hasRecordAudioPermission() && pendingAudioUsesMic()) {
+                t = t or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
         }
         return t
+    }
+
+    private fun hasRecordAudioPermission(): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun pendingAudioUsesMic(): Boolean {
+        val mode = RecorderLauncher.pendingConfig?.audioMode ?: return false
+        return mode == RecorderConfig.AudioMode.MIC || mode == RecorderConfig.AudioMode.BOTH
     }
 
     private fun postNotification(paused: Boolean) {

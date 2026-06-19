@@ -36,7 +36,7 @@ object Screenshotter {
         val thread = HandlerThread("rzy-shot").apply { start() }
         val handler = Handler(thread.looper)
 
-        val reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 1)
+        val reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
         val display = projection.createVirtualDisplay(
             "RecorderZy-Shot",
             w, h, densityDpi,
@@ -47,8 +47,34 @@ object Screenshotter {
             handler
         )
 
+        // Guard against the callback running twice and against resource leaks.
+        val done = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun cleanup() {
+            runCatching { display?.release() }
+            runCatching { reader.close() }
+            runCatching { thread.quitSafely() }
+        }
+
+        fun finish(uri: android.net.Uri?) {
+            if (done.compareAndSet(false, true)) {
+                cleanup()
+                callback(uri)
+            }
+        }
+
+        // Fallback: if the VirtualDisplay never pushes a frame within 4s
+        // (some OEMs / secure surfaces never deliver), don't hang forever.
+        handler.postDelayed({
+            if (!done.get()) {
+                android.util.Log.w(TAG, "Screenshot timed out waiting for a frame")
+                finish(null)
+            }
+        }, 4_000)
+
         reader.setOnImageAvailableListener({ r ->
-            val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+            val image = runCatching { r.acquireLatestImage() }.getOrNull()
+                ?: return@setOnImageAvailableListener
             try {
                 val plane = image.planes[0]
                 val buffer = plane.buffer
@@ -74,13 +100,15 @@ object Screenshotter {
                     "RecorderZy-${System.currentTimeMillis()}",
                     "image/jpeg"
                 )
-                callback(uri)
-            } finally {
                 runCatching { image.close() }
-                runCatching { display?.release() }
-                runCatching { reader.close() }
-                runCatching { thread.quitSafely() }
+                finish(uri)
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "Screenshot processing failed: ${t.message}", t)
+                runCatching { image.close() }
+                finish(null)
             }
         }, handler)
     }
+
+    private const val TAG = "Screenshotter"
 }
