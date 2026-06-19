@@ -134,13 +134,17 @@ class RecorderChannel(
         sink = events
         streamJob?.cancel()
         streamJob = scope.launch {
-            RecorderStateBus.phase
-                .combine(RecorderStateBus.elapsedMs) { p, ms -> p to ms }
-                .collect { (phase, ms) ->
+            combine(
+                RecorderStateBus.phase,
+                RecorderStateBus.elapsedMs,
+                RecorderStateBus.lastError,
+            ) { phase, ms, err -> Triple(phase, ms, err) }
+                .collect { (phase, ms, err) ->
                     sink?.success(
                         mapOf(
                             "phase" to phase.name,
                             "elapsedMs" to ms,
+                            "error" to err,
                         )
                     )
                 }

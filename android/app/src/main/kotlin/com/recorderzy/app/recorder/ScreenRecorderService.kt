@@ -95,6 +95,7 @@ class ScreenRecorderService : Service() {
     }
 
     private fun handleStart() {
+        RecorderStateBus.publishError(null)
         // Token comes from ProjectionTokenHolder, NOT from intent extras.
         // See ProjectionTokenHolder for why.
         val (resultCode, data) = ProjectionTokenHolder.take() ?: run {
@@ -159,6 +160,7 @@ class ScreenRecorderService : Service() {
             // failure when all MediaRecorder attempts were exhausted.
             val reason = engine?.lastError ?: "${e.javaClass.simpleName}: ${e.message}"
             Log.e(TAG, "Failed to start recording engine: $reason", e)
+            RecorderStateBus.publishError("Recording failed: $reason")
             showErrorNotification("Recording failed", reason)
             runCatching { projection.stop() }
             this.projection = null

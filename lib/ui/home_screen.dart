@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../core/platform/recorder_bridge.dart';
@@ -35,9 +36,42 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _stateSub = _bridge.recorderState.listen((s) {
-      if (mounted) setState(() => _state = s);
+      if (!mounted) return;
+      setState(() => _state = s);
+      final err = s.error;
+      if (err != null && err.isNotEmpty && err != _lastShownError) {
+        _lastShownError = err;
+        _showErrorDialog(err);
+      }
     });
     _refreshSystemFlags();
+  }
+
+  String? _lastShownError;
+
+  void _showErrorDialog(String error) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Recording failed'),
+        content: SingleChildScrollView(child: SelectableText(error)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: error));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Error copied to clipboard')),
+              );
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

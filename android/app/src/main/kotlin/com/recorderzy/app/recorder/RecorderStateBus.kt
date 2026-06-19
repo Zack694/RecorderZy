@@ -22,8 +22,13 @@ object RecorderStateBus {
     private val _elapsedMs = MutableStateFlow(0L)
     val elapsedMs: StateFlow<Long> = _elapsedMs
 
+    /** Last error message (e.g. why recording failed to start). */
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError
+
     fun publishPhase(p: Phase) { _phase.value = p }
     fun publishElapsed(ms: Long) { _elapsedMs.value = ms }
+    fun publishError(message: String?) { _lastError.value = message }
     fun reset() {
         _phase.value = Phase.IDLE
         _elapsedMs.value = 0L

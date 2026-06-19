@@ -24,6 +24,7 @@ class RecorderBridge {
         return RecorderState(
           phase: _phaseFrom(map['phase'] as String? ?? 'IDLE'),
           elapsedMs: (map['elapsedMs'] as num?)?.toInt() ?? 0,
+          error: map['error'] as String?,
         );
       });
 
@@ -183,9 +184,10 @@ enum RecorderPhase { idle, recording, paused }
 
 @immutable
 class RecorderState {
-  const RecorderState({required this.phase, required this.elapsedMs});
+  const RecorderState({required this.phase, required this.elapsedMs, this.error});
   final RecorderPhase phase;
   final int elapsedMs;
+  final String? error;
 }
 
 @immutable

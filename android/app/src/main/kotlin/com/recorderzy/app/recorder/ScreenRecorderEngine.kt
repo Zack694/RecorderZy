@@ -81,12 +81,18 @@ class ScreenRecorderEngine(
             val micEnabled = audioWantsMic() && hasRecordAudioPermission()
             val fps = cfg.frameRate.coerceIn(15, 120)
 
-            // Progressively safer configs until one prepares.
+            // Progressively safer configs until one prepares. The later
+            // attempts cap the LONG edge so the size can't exceed an encoder's
+            // max dimension (phone encoders are built for landscape and often
+            // cap height ~2160; a 2712px-tall screen otherwise fails). The
+            // final 1280 attempt is a resolution every Android encoder
+            // supports, so recording is essentially guaranteed to start.
             val attempts = listOf(
-                Attempt(MediaFormat.MIMETYPE_VIDEO_HEVC, MediaRecorder.VideoEncoder.HEVC, micEnabled, fps),
-                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, micEnabled, fps),
-                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, micEnabled, 30),
-                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, false, 30),
+                Attempt(MediaFormat.MIMETYPE_VIDEO_HEVC, MediaRecorder.VideoEncoder.HEVC, micEnabled, fps, 0),
+                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, micEnabled, fps, 0),
+                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, micEnabled, fps, 1920),
+                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, micEnabled, 30, 1280),
+                Attempt(MediaFormat.MIMETYPE_VIDEO_AVC, MediaRecorder.VideoEncoder.H264, false, 30, 1280),
             )
 
             var prepared = false
@@ -169,6 +175,8 @@ class ScreenRecorderEngine(
         val encoder: Int,
         val mic: Boolean,
         val fps: Int,
+        /** Cap on the longer edge (0 = use native size). */
+        val maxLongEdge: Int,
     )
 
     private fun configureRecorder(out: File, a: Attempt): Boolean {
@@ -176,8 +184,10 @@ class ScreenRecorderEngine(
         recorder = null
         inputSurface = null
 
-        // Clamp the requested size to what THIS encoder supports.
-        val (w, h) = supportedSize(a.mime, cfg.widthPx, cfg.heightPx)
+        // Optionally scale down so the long edge fits maxLongEdge, then clamp
+        // to what THIS encoder actually supports.
+        val (capW, capH) = capLongEdge(cfg.widthPx, cfg.heightPx, a.maxLongEdge)
+        val (w, h) = supportedSize(a.mime, capW, capH)
         if (w < 16 || h < 16) {
             lastError = "Encoder ${a.mime} reports no usable size for ${cfg.widthPx}x${cfg.heightPx}"
             return false
@@ -296,6 +306,15 @@ class ScreenRecorderEngine(
             PackageManager.PERMISSION_GRANTED
 
     private fun alignDown(value: Int, align: Int): Int = (value / align) * align
+
+    /** Scales (w,h) down so the longer edge fits [maxLongEdge] (0 = no cap). */
+    private fun capLongEdge(w: Int, h: Int, maxLongEdge: Int): Pair<Int, Int> {
+        if (maxLongEdge <= 0) return w to h
+        val longEdge = maxOf(w, h)
+        if (longEdge <= maxLongEdge) return w to h
+        val scale = maxLongEdge.toDouble() / longEdge
+        return (w * scale).toInt().coerceAtLeast(16) to (h * scale).toInt().coerceAtLeast(16)
+    }
 
     private suspend fun tickElapsed() {
         val startedAt = nowMs()
