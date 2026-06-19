@@ -187,6 +187,12 @@ class FloatingOverlayService : Service() {
         container.addView(timer)
 
         // -- Window ----------------------------------------------------------
+        // NOTE: deliberately NOT hardware-accelerated. A FLAG_SECURE overlay
+        // that lives on a hardware layer can't be read back by the compositor
+        // during MediaProjection, so it gets composited as a BLACK box instead
+        // of being omitted from the capture. Without hardware acceleration the
+        // secure layer is properly skipped, so the button is invisible in the
+        // recording (visible only on-screen) - the behaviour AZ/XRecorder have.
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -194,7 +200,6 @@ class FloatingOverlayService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
                 WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
