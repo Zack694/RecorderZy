@@ -66,12 +66,8 @@ class FloatingOverlayService : Service() {
     private var handleParams: WindowManager.LayoutParams? = null
     private var drawerExpanded = false
 
-    /** True once the user has asked to show the overlay (ACTION_SHOW). */
-    @Volatile private var userWantsOverlay = false
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var stateJob: Job? = null
-    private var phaseWatchJob: Job? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -87,7 +83,6 @@ class FloatingOverlayService : Service() {
         startForegroundCompat()
         when (intent?.action) {
             ACTION_HIDE -> {
-                userWantsOverlay = false
                 tearDownOverlay()
                 stopSelf()
                 return START_NOT_STICKY
@@ -100,46 +95,8 @@ class FloatingOverlayService : Service() {
                 return START_STICKY
             }
         }
-        userWantsOverlay = true
-        startPhaseWatcher()
-        // Only actually add the window if we're not mid-recording. While
-        // recording, the watcher keeps the overlay hidden so it can't appear
-        // (as a black box on ROMs that redact secure overlays) in the video.
-        if (RecorderStateBus.phase.value == RecorderStateBus.Phase.IDLE) {
-            ensureOverlayShown()
-        }
+        ensureOverlayShown()
         return START_STICKY
-    }
-
-    /**
-     * Persistent watcher that hides the floating overlay while a recording is
-     * active (RECORDING/PAUSED) and restores it when idle. This is what keeps
-     * the bubble out of the captured video: some OEM ROMs (HyperOS/MIUI)
-     * render FLAG_SECURE overlays as a black box in MediaProjection instead of
-     * omitting them, so the only reliable way to keep it out of the video is
-     * to remove the window during capture. Recording controls remain available
-     * in the persistent notification (Pause / Stop / Screenshot).
-     */
-    private fun startPhaseWatcher() {
-        if (phaseWatchJob?.isActive == true) return
-        phaseWatchJob = scope.launch {
-            RecorderStateBus.phase.collect { phase ->
-                if (phase == RecorderStateBus.Phase.IDLE) {
-                    if (userWantsOverlay && rootView == null) ensureOverlayShown()
-                } else {
-                    hideOverlayWindow()
-                }
-            }
-        }
-    }
-
-    /** Removes the overlay window (without forgetting that the user wants it). */
-    private fun hideOverlayWindow() {
-        stateJob?.cancel()
-        rootView?.let { runCatching { windowManager.removeView(it) } }
-        rootView = null
-        handleParams = null
-        drawerExpanded = false
     }
 
     private fun ensureOverlayShown() {
@@ -153,6 +110,11 @@ class FloatingOverlayService : Service() {
 
         val container = FrameLayout(this)
         rootView = container
+        // Force software rendering on the overlay. A hardware (GPU) secure
+        // layer can't be read back by the screen compositor during capture, so
+        // it gets composited as a BLACK box; a software-rendered secure layer
+        // is more likely to be omitted from the capture instead.
+        container.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
 
         // -- Handle (the persistent circle) ----------------------------------
         val handle = FrameLayout(this).apply {
