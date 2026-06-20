@@ -192,20 +192,22 @@ class FloatingOverlayService : Service() {
         container.addView(timer)
 
         // -- Window ----------------------------------------------------------
-        // NOTE: deliberately NOT hardware-accelerated. A FLAG_SECURE overlay
-        // that lives on a hardware layer can't be read back by the compositor
-        // during MediaProjection, so it gets composited as a BLACK box instead
-        // of being omitted from the capture. Without hardware acceleration the
-        // secure layer is properly skipped, so the button is invisible in the
-        // recording (visible only on-screen) - the behaviour AZ/XRecorder have.
+        // DIAGNOSTIC: FLAG_SECURE temporarily removed. This tells us what is
+        // actually drawing the black square in recordings:
+        //   * If the button now appears as the NORMAL button (circle + icon)
+        //     in the video, the black box was FLAG_SECURE being redacted to
+        //     black by the ROM (secure-blackout) - so the fix path is
+        //     accessibility-overlay / single-app / auto-hide.
+        //   * If it's STILL a black square even without FLAG_SECURE, then the
+        //     cause is the overlay rendering itself (a fixable bug), not the
+        //     secure flag.
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
